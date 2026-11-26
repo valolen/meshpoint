@@ -44,7 +44,23 @@ def prepare_packet(packet: Packet, precision: str) -> Packet:
             return {key: item for key, item in result.items() if key not in _LOCATION_FIELDS}
         if policy == "approximate":
             result = {key: item for key, item in result.items() if key not in _LOCATION_FIELDS}
-            result.update(latitude=round(lat, 2), longitude=round(lon, 2))
+            if packet.protocol == Protocol.MESHTASTIC:
+                # Quantize to a Meshtastic coordinate grid, never claiming
+                # greater precision than the received position.
+                original_bits = value.get("precision_bits")
+                bits = min(12, original_bits) if type(original_bits) is int and 0 < original_bits <= 32 else 12
+                step = 1 << (32 - bits)
+
+                def quantize(coord, limit):
+                    integer = round(coord * 1e7)
+                    center = (integer // step) * step + step // 2
+                    return max(-limit, min(limit, center / 1e7))
+
+                result.update(latitude=quantize(lat, 90),
+                              longitude=quantize(lon, 180),
+                              precision_bits=bits)
+            else:
+                result.update(latitude=round(lat, 2), longitude=round(lon, 2))
         return result
 
     return replace(packet, decoded_payload=filtered(deepcopy(packet.decoded_payload)),

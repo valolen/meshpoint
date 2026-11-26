@@ -16,6 +16,13 @@ class NodeCards {
         this._container = document.getElementById(containerId);
         this._onCardClick = onCardClick;
         this._nodes = [];
+        this._localNodeId = '';
+        fetch('/api/config', {credentials: 'same-origin'})
+            .then(r => r.ok ? r.json() : null)
+            .then(d => {
+                this._localNodeId = String(d?.transmit?.node_id_hex || '').replace(/^!/, '').toLowerCase();
+                this._render();
+            }).catch(() => {});
         this._searchQuery = '';
         this._sortBy = this._loadSavedSort();
         this._filter = this._loadSavedFilter();
@@ -215,7 +222,12 @@ class NodeCards {
         });
     }
 
+    _isLocal(n) {
+        return !!this._localNodeId && String(n.node_id || '').replace(/^!/, '').toLowerCase() === this._localNodeId;
+    }
+
     _applyFilter(nodes) {
+        if (this._filter !== 'all') nodes = nodes.filter(n => !this._isLocal(n));
         let filtered = window.MeshpointNodeCardsSort
             ? window.MeshpointNodeCardsSort.applyFilter(nodes, this._filter)
             : nodes;
@@ -235,9 +247,10 @@ class NodeCards {
             ? new Set(window.MeshpointNodeFavorites.list())
             : new Set();
         if (window.MeshpointNodeCardsSort) {
-            return window.MeshpointNodeCardsSort.applySort(nodes, this._sortBy, favs);
+            return window.MeshpointNodeCardsSort.applySort(nodes, this._sortBy, favs)
+                .sort((a, b) => Number(this._isLocal(b)) - Number(this._isLocal(a)));
         }
-        return nodes.slice();
+        return nodes.slice().sort((a, b) => Number(this._isLocal(b)) - Number(this._isLocal(a)));
     }
 
     _buildCard(n) {
@@ -282,6 +295,7 @@ class NodeCards {
     }
 
     _buildSignal(n) {
+        if (this._isLocal(n)) return '<div class="nc-card__row"><span class="nc-chip">LOCAL</span></div>';
         const parts = [];
         const rssi = n.latest_rssi ?? n.rssi;
         const snr = n.latest_snr ?? n.snr;

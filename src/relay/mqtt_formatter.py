@@ -88,6 +88,8 @@ class MeshtasticMqttFormatter:
         topic = f"{self._topic_prefix}/2/e/{channel_name}/{self._gateway_id}"
 
         mesh_pkt = MeshPacket()
+        if packet.capture_source == "concentrator":
+            mesh_pkt.transport_mechanism = 1  # TRANSPORT_LORA
         mesh_pkt.id = _parse_packet_id(packet.packet_id)
         mesh_pkt.hop_limit = packet.hop_limit
         mesh_pkt.hop_start = packet.hop_start
@@ -127,6 +129,8 @@ class MeshtasticMqttFormatter:
         topic = f"{self._topic_prefix}/2/e/{channel_name}/{self._gateway_id}"
 
         mesh_pkt = MeshPacket()
+        if packet.capture_source == "concentrator":
+            mesh_pkt.transport_mechanism = 1  # TRANSPORT_LORA
         mesh_pkt.id = _parse_packet_id(packet.packet_id)
         mesh_pkt.hop_limit = packet.hop_limit
         mesh_pkt.hop_start = packet.hop_start

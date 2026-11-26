@@ -148,17 +148,17 @@ class SimplePacketFeed {
                     if(key==='type') ['text','position','telemetry','nodeinfo','routing','admin','traceroute','neighborinfo','waypoint','range_test','store_forward','detection_sensor','paxcounter','map_report','encrypted','unknown'].forEach(v=>values.add(v));
                     if(current) current.values.forEach(v=>values.add(v));
                     const list=document.createElement('div');list.style.cssText='max-height:240px;overflow:auto';
-                    const selected=new Set(current?.values||values);
+                    const selected=new Set(current?.values || []);
                     for(const v of [...values].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}))){
                         const label=document.createElement('label');label.style.cssText='display:flex;gap:6px;padding:4px;cursor:pointer';
                         const cb=document.createElement('input');cb.type='checkbox';cb.checked=selected.has(v);
-                        cb.addEventListener('change',()=>{if(cb.checked)selected.add(v);else selected.delete(v);apply(selected.size===values.size?null:{kind,values:new Set(selected)});});
+                        cb.addEventListener('change',()=>{if(cb.checked)selected.add(v);else selected.delete(v);apply(selected.size===0?null:{kind,values:new Set(selected)});});
                         label.append(cb,document.createTextNode(v));list.append(label);
                     }
                     panel.append(list);
                 }
                 const clear=document.createElement('button');clear.type='button';clear.textContent='Clear filter';clear.style.marginTop='8px';
-                clear.addEventListener('click',()=>{apply(null);build();});panel.append(clear);
+                clear.addEventListener('click',e=>{e.stopPropagation();apply(null);build();});panel.append(clear);
             };
             btn.addEventListener('click',()=>{
                 if(!panel.hidden){close();return;}

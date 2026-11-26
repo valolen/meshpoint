@@ -30,6 +30,35 @@
 
 /* ── Outer panel ────────────────────────────────────────────────── */
 
+/* The section already occupies the space below the application topbar.
+   Size the chat to that space, not to the full browser viewport. */
+#messaging-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#messaging-panel > .messaging {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
+}
+
+#messaging-panel .msg-chat,
+#messaging-panel .msg-sidebar,
+#messaging-panel .msg-chat__messages,
+#messaging-panel .msg-sidebar__list {
+    min-height: 0;
+}
+
+#messaging-panel .msg-compose,
+#messaging-panel .msg-chat__header {
+    flex-shrink: 0;
+}
+
+
 .messaging {
     display: flex;
     height: calc(100vh - 32px);

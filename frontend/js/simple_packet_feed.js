@@ -14,6 +14,8 @@ class SimplePacketFeed {
         this._sourceIds = new Set();
         this._sourceMode = 'both';
         this._installSourceFilter();
+        this._columnFilters = new Map();
+        this._installColumnFilters();
         const pills = document.getElementById('packet-preset-pills');
         if (window.MeshpointRadioViewFilter) {
             MeshpointRadioViewFilter.wirePills(pills);
@@ -56,15 +58,119 @@ class SimplePacketFeed {
         const radioVisible = window.MeshpointRadioViewFilter
             ? this._packets.filter((p) => MeshpointRadioViewFilter.matchesPacket(p, key))
             : this._packets;
-        const visible = radioVisible.filter(p => this._matchesSource(p));
+        const visible = radioVisible.filter(p => this._matchesSource(p) && this._matchesColumns(p));
         this._tbody.replaceChildren();
         for (const packet of visible) {
             this._tbody.appendChild(this._buildRow(packet));
         }
         const countEl = document.getElementById('packet-count');
-        if (countEl) countEl.textContent = this._sourceIds.size ? `${visible.length}/${this._packets.length}` : this._count;
+        if (countEl) countEl.textContent = (this._sourceIds.size || this._columnFilters.size) ? `${visible.length}/${this._packets.length}` : this._count;
     }
 
+
+
+    _columnValue(p, key) {
+        const sig = p.signal || {};
+        switch(key) {
+            case 'time': return this._formatTime(p);
+            case 'protocol': return p.protocol || 'meshtastic';
+            case 'dest': return this._shortId(p.destination_id);
+            case 'type': return p.packet_type || '--';
+            case 'rssi': return this._displayRssi(sig.rssi ?? p.rssi);
+            case 'snr': return sig.snr ?? p.snr;
+            case 'preset': return window.ModemPresetLabel ? ModemPresetLabel.fromPacket(p)?.chip || '--' : '--';
+            case 'freq': return sig.frequency_mhz ?? p.frequency_mhz;
+            case 'sf': return sig.spreading_factor ?? p.spreading_factor;
+            case 'hops': {
+                const n = p.protocol === 'meshcore' ? p.decoded_payload?.meshcore_hops :
+                    p.hop_start > 0 ? p.hop_start-p.hop_limit : null;
+                return n == null ? 'Unknown' : n === 0 ? 'Direct' : 'Relayed';
+            }
+            case 'details': return this._summarize(p);
+        }
+    }
+
+    _matchesColumns(p) {
+        for (const [key, f] of this._columnFilters) {
+            const v = this._columnValue(p,key);
+            if (f.kind === 'set' && !f.values.has(String(v ?? '--'))) return false;
+            if (f.kind === 'text' && !String(v ?? '').toLowerCase().includes(f.value)) return false;
+            if (f.kind === 'range' && (v == null || !Number.isFinite(Number(v)) ||
+                (f.min !== '' && Number(v)<Number(f.min)) ||
+                (f.max !== '' && Number(v)>Number(f.max)))) return false;
+        }
+        return true;
+    }
+
+    _installColumnFilters() {
+        const headers = this._tbody?.closest('table')?.querySelectorAll('thead th') || [];
+        for (const th of headers) {
+            const title = th.textContent.trim();
+            const key = title.toLowerCase();
+            if (!['time','protocol','dest','type','rssi','snr','preset','freq','sf','hops','details'].includes(key)) continue;
+            const kind = ['rssi','snr'].includes(key) ? 'range' : ['time','details'].includes(key) ? 'text' : 'set';
+            const btn = document.createElement('button');
+            btn.type='button';
+            btn.textContent=title+' ▾';
+            btn.style.cssText='background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0';
+            btn.setAttribute('aria-expanded','false');
+            th.replaceChildren(btn);
+            const panel=document.createElement('div');
+            panel.hidden=true;
+            panel.style.cssText='position:fixed;z-index:10000;width:min(250px,90vw);padding:10px;background:#172033;color:#e2e8f0;border:1px solid #475569;border-radius:6px;box-shadow:0 6px 20px #0006;font:13px sans-serif;text-align:left';
+            document.body.append(panel);
+            const apply=f=>{
+                if(f) this._columnFilters.set(key,f); else this._columnFilters.delete(key);
+                btn.style.color=f?'#22d3ee':'inherit';
+                this._render();
+            };
+            const close=()=>{panel.hidden=true;btn.setAttribute('aria-expanded','false');};
+            const build=()=>{
+                panel.replaceChildren();
+                const current=this._columnFilters.get(key);
+                if(kind==='range'){
+                    const inputs=['min','max'].map(k=>{
+                        const el=document.createElement('input');
+                        el.type='number';el.step='any';el.placeholder=k==='min'?'Minimum':'Maximum';
+                        el.value=current?.[k]??'';
+                        el.style.cssText='width:100%;box-sizing:border-box;margin-bottom:6px';
+                        panel.append(el);return el;
+                    });
+                    const update=()=>{const [min,max]=inputs.map(el=>el.value);apply(min===''&&max===''?null:{kind,min,max});};
+                    inputs.forEach(el=>el.addEventListener('input',update));
+                }else if(kind==='text'){
+                    const el=document.createElement('input');el.type='search';el.placeholder='Contains...';el.value=current?.value||'';
+                    el.style.cssText='width:100%;box-sizing:border-box;margin-bottom:6px';
+                    el.addEventListener('input',()=>apply(el.value?{kind,value:el.value.toLowerCase()}:null));panel.append(el);
+                }else{
+                    const values=new Set(this._packets.map(p=>String(this._columnValue(p,key)??'--')));
+                    if(key==='hops') ['Direct','Relayed','Unknown'].forEach(v=>values.add(v));
+                    if(current) current.values.forEach(v=>values.add(v));
+                    const list=document.createElement('div');list.style.cssText='max-height:240px;overflow:auto';
+                    const selected=new Set(current?.values||values);
+                    for(const v of [...values].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}))){
+                        const label=document.createElement('label');label.style.cssText='display:flex;gap:6px;padding:4px;cursor:pointer';
+                        const cb=document.createElement('input');cb.type='checkbox';cb.checked=selected.has(v);
+                        cb.addEventListener('change',()=>{if(cb.checked)selected.add(v);else selected.delete(v);apply(selected.size===values.size?null:{kind,values:new Set(selected)});});
+                        label.append(cb,document.createTextNode(v));list.append(label);
+                    }
+                    panel.append(list);
+                }
+                const clear=document.createElement('button');clear.type='button';clear.textContent='Clear filter';clear.style.marginTop='8px';
+                clear.addEventListener('click',()=>{apply(null);build();});panel.append(clear);
+            };
+            btn.addEventListener('click',()=>{
+                if(!panel.hidden){close();return;}
+                build();const rect=btn.getBoundingClientRect();
+                panel.style.left=Math.max(4,Math.min(rect.left,window.innerWidth-260))+'px';
+                panel.style.top=Math.max(4,Math.min(rect.bottom+4,window.innerHeight-330))+'px';
+                panel.hidden=false;btn.setAttribute('aria-expanded','true');
+            });
+            document.addEventListener('click',e=>{if(!panel.contains(e.target)&&!btn.contains(e.target))close();});
+            document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!panel.hidden){close();btn.focus();}});
+            window.addEventListener('resize',close);
+        }
+    }
 
     _normalizeId(id) {
         return String(id || '').replace(/^!/, '').toLowerCase();

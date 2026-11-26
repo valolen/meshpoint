@@ -405,6 +405,16 @@ class PipelineCoordinator:
             return
 
         packet.capture_source = raw.capture_source
+
+        # Off-modem receptions are local observations only. Do not update
+        # active-network node identities, PKI keys, or upstream statistics.
+        if not self.is_active_radio_packet(packet):
+            try:
+                await self._packet_repo.insert(packet)
+            except Exception:
+                logger.exception("Failed to store passive packet %s", packet.packet_id)
+            return
+
         await self._store_packet(packet)
         self._notify_callbacks(packet)
         await self._relay.process_packet(packet)

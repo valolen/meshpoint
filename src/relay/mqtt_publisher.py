@@ -186,7 +186,19 @@ class MqttPublisher:
         if not self._passes_safety_gates(packet):
             return False
 
+        original = packet
         packet = prepare_packet(packet, self._config.location_precision)
+        # Only preserve original RF ciphertext for known non-position broadcasts.
+        # Do not bypass the shared location filter for POSITION or unknown types.
+        if (
+            original.protocol == Protocol.MESHTASTIC
+            and original.packet_type in (PacketType.NODEINFO, PacketType.TELEMETRY)
+            and original.decrypted
+            and original.raw_radio_packet
+            and original.encrypted_payload
+            and original.decoded_payload == packet.decoded_payload
+        ):
+            packet.encrypted_payload = original.encrypted_payload
         messages = self._format_packet(packet)
         published = False
         for msg in messages:

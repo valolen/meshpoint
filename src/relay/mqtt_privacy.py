@@ -48,7 +48,11 @@ def prepare_packet(packet: Packet, precision: str) -> Packet:
                 # Quantize to a Meshtastic coordinate grid, never claiming
                 # greater precision than the received position.
                 original_bits = value.get("precision_bits")
-                bits = min(12, original_bits) if type(original_bits) is int and 0 < original_bits <= 32 else 12
+                bits = min(15, original_bits) if type(original_bits) is int and 0 < original_bits <= 32 else 15
+                if type(original_bits) is int and 0 < original_bits <= 15:
+                    result.update(latitude=lat, longitude=lon,
+                                  precision_bits=original_bits)
+                    return result
                 step = 1 << (32 - bits)
 
                 def quantize(coord, limit):

@@ -195,10 +195,10 @@ class MqttPublisher:
             and original.packet_type in (PacketType.NODEINFO, PacketType.TELEMETRY)
             and original.decrypted
             and original.raw_radio_packet
-            and original.encrypted_payload
+            and len(original.raw_radio_packet) > 16
             and original.decoded_payload == packet.decoded_payload
         ):
-            packet.encrypted_payload = original.encrypted_payload
+            packet.encrypted_payload = original.raw_radio_packet[16:]
         messages = self._format_packet(packet)
         published = False
         for msg in messages:

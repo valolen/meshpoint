@@ -71,6 +71,9 @@ class MeshtasticMqttFormatter:
             logger.warning("meshtastic protobuf not available")
             return None
 
+        if packet.encrypted_payload and packet.packet_type in (PacketType.NODEINFO, PacketType.TELEMETRY):
+            return self._format_encrypted(packet)
+
         portnum = PORTNUM_MAP.get(packet.packet_type)
         if portnum is None:
             return None
@@ -136,6 +139,11 @@ class MeshtasticMqttFormatter:
         if packet.destination_id and _is_hex(packet.destination_id):
             mesh_pkt.to = int(packet.destination_id, 16) & 0xFFFFFFFF
 
+        if packet.signal and packet.signal.rssi is not None:
+            mesh_pkt.rx_rssi = int(packet.signal.rssi)
+        if packet.signal and packet.signal.snr is not None:
+            mesh_pkt.rx_snr = packet.signal.snr
+        mesh_pkt.relay_node = packet.relay_node
         mesh_pkt.encrypted = packet.encrypted_payload
 
         envelope = ServiceEnvelope()

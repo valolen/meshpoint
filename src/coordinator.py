@@ -369,6 +369,22 @@ class PipelineCoordinator:
         except Exception:
             logger.exception("Pipeline error")
 
+    def is_active_radio_packet(self, packet: Packet) -> bool:
+        """Check whether an SX1302 packet belongs to the active modem."""
+        if packet.capture_source != "concentrator":
+            return True
+
+        signal = packet.signal
+        radio = self._config.radio
+        if signal is None or radio.frequency_mhz is None:
+            return False
+
+        return (
+            abs(signal.frequency_mhz - radio.frequency_mhz) <= 0.001
+            and signal.spreading_factor == radio.spreading_factor
+            and abs(signal.bandwidth_khz - radio.bandwidth_khz) < 0.1
+        )
+
     async def _process_capture(self, raw: RawCapture) -> None:
         # Match bare "meshcore_usb" and labelled forms (meshcore_usb_868, …)
         # so Wave B multi-companion tags still hit the event adapter.

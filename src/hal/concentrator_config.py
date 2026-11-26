@@ -14,6 +14,7 @@ protocols or custom Meshtastic presets.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class ChannelConfig:
     bandwidth_khz: int = 125
     spreading_factor: int = 0
     enabled: bool = True
+    rf_chain: int | None = None
 
 
 @dataclass
@@ -83,6 +85,22 @@ class ConcentratorChannelPlan:
             )
 
         is_longfast = (spreading_factor == 11 and int(bandwidth_khz) == 250)
+
+        if region == "EU_868" and os.getenv("MESHPOINT_MULTICHANNEL_RX") == "1":
+            if freq_hz != default_hz or not is_longfast:
+                raise ValueError("Experimental multichannel RX requires EU_868 LongFast")
+            plan = cls.meshtastic_eu868_default()
+            plan.radio_1_freq_hz = 868_300_000
+            plan.multi_sf_channels = [
+                ChannelConfig(frequency_hz=f, rf_chain=chain)
+                for f, chain in (
+                    (869_462_500, 0), (869_587_500, 0),
+                    (867_900_000, 1), (868_100_000, 1),
+                    (868_300_000, 1), (868_500_000, 1),
+                    (868_700_000, 1), (869_000_000, 0),
+                )
+            ]
+            return plan
 
         if freq_hz == default_hz and is_longfast:
             return cls.for_region(region)

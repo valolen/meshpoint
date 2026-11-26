@@ -296,8 +296,8 @@ class NodeCards {
             parts.push(`<span class="nc-chip nc-chip--quality nc-chip--${q.cls}">${q.label}</span>`);
         }
 
-        if (n.latest_hops != null && n.latest_hops > 0) {
-            parts.push(`<span class="nc-chip">${n.latest_hops} hop${n.latest_hops > 1 ? 's' : ''}</span>`);
+        if (n.latest_hops != null) {
+            parts.push(`<span class="nc-chip">${n.latest_hops} hop${n.latest_hops !== 1 ? 's' : ''}</span>`);
         }
 
         return parts.length

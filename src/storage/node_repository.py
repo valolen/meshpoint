@@ -187,8 +187,21 @@ class NodeRepository:
                 SELECT source_id,
                        rssi, snr, hop_limit, hop_start, capture_source,
                        spreading_factor, bandwidth_khz,
-                       ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY timestamp DESC) AS rn
-                FROM packets
+                       ROW_NUMBER() OVER (
+                           PARTITION BY source_id
+                           ORDER BY packet_last_seen DESC,
+                                    CASE WHEN hop_start > 0 AND hop_limit <= hop_start
+                                         THEN hop_start - hop_limit ELSE 99 END ASC,
+                                    snr DESC, rssi DESC, timestamp DESC
+                       ) AS rn
+                FROM (
+                    SELECT packets.*,
+                           MAX(timestamp) OVER (
+                               PARTITION BY source_id, packet_id,
+                                   CASE WHEN packet_id IS NULL THEN timestamp ELSE '' END
+                           ) AS packet_last_seen
+                    FROM packets
+                )
             ) p ON p.source_id = n.node_id AND p.rn = 1
             LEFT JOIN (
                 SELECT node_id,

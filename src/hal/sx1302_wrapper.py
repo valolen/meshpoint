@@ -191,6 +191,22 @@ class SX1302Wrapper:
         self._configure_board()
         self._configure_rf_chains(plan)
         self._configure_if_channels(plan)
+        mask_value = os.getenv("MESHPOINT_MULTISF_MASK")
+        if mask_value is not None:
+            mask = int(mask_value, 0)
+            if not 1 <= mask <= 0xFF:
+                raise ValueError("MESHPOINT_MULTISF_MASK must be 0x01..0xFF")
+
+            class LgwConfDemodS(ctypes.Structure):
+                _fields_ = [("multisf_datarate", ctypes.c_uint8)]
+
+            set_demod = self._lib.lgw_demod_setconf
+            set_demod.argtypes = [ctypes.POINTER(LgwConfDemodS)]
+            set_demod.restype = ctypes.c_int
+            conf = LgwConfDemodS(mask)
+            if set_demod(ctypes.byref(conf)) != LGW_HAL_SUCCESS:
+                raise RuntimeError("lgw_demod_setconf() failed")
+            logger.info("Multi-SF correlator mask configured: 0x%02X", mask)
         self._service_modem_enabled = bool(
             plan.single_sf_channel and plan.single_sf_channel.enabled
         )

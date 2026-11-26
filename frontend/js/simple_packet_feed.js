@@ -10,6 +10,10 @@ class SimplePacketFeed {
         this._packets = [];
         this._nodeByLastByte = new Map();
         this._onFocus = null;
+        this._nodes = [];
+        this._sourceIds = new Set();
+        this._sourceMode = 'both';
+        this._installSourceFilter();
         const pills = document.getElementById('packet-preset-pills');
         if (window.MeshpointRadioViewFilter) {
             MeshpointRadioViewFilter.wirePills(pills);
@@ -22,6 +26,7 @@ class SimplePacketFeed {
     }
 
     loadNodes(nodes) {
+        this._nodes = nodes;
         this._nodeByLastByte.clear();
         for (const node of nodes) {
             const id = node.node_id;
@@ -48,15 +53,114 @@ class SimplePacketFeed {
         const key = window.MeshpointRadioViewFilter
             ? MeshpointRadioViewFilter.current()
             : 'all';
-        const visible = window.MeshpointRadioViewFilter
+        const radioVisible = window.MeshpointRadioViewFilter
             ? this._packets.filter((p) => MeshpointRadioViewFilter.matchesPacket(p, key))
             : this._packets;
+        const visible = radioVisible.filter(p => this._matchesSource(p));
         this._tbody.replaceChildren();
         for (const packet of visible) {
             this._tbody.appendChild(this._buildRow(packet));
         }
         const countEl = document.getElementById('packet-count');
-        if (countEl) countEl.textContent = this._count;
+        if (countEl) countEl.textContent = this._sourceIds.size ? `${visible.length}/${this._packets.length}` : this._count;
+    }
+
+
+    _normalizeId(id) {
+        return String(id || '').replace(/^!/, '').toLowerCase();
+    }
+
+    _matchesSource(packet) {
+        if (!this._sourceIds.size) return true;
+        const sender = this._sourceIds.has(this._normalizeId(packet.source_id));
+        const relay = Number(packet.relay_node || 0);
+        const relayed = relay > 0 && [...this._sourceIds].some(id =>
+            /^[0-9a-f]{8}$/.test(id) && parseInt(id.slice(-2), 16) === relay);
+        return (this._sourceMode !== 'relay' && sender) ||
+            (this._sourceMode !== 'sender' && relayed);
+    }
+
+    _installSourceFilter() {
+        const th = [...(this._tbody?.closest('table')?.querySelectorAll('thead th') || [])]
+            .find(el => el.textContent.trim().toLowerCase() === 'source');
+        if (!th) return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Source ▾';
+        button.style.cssText = 'background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0';
+        button.setAttribute('aria-expanded', 'false');
+        th.replaceChildren(button);
+        const panel = document.createElement('div');
+        panel.hidden = true;
+        panel.style.cssText = 'position:fixed;z-index:10000;width:min(320px,90vw);padding:10px;background:#172033;color:#e2e8f0;border:1px solid #475569;border-radius:6px;box-shadow:0 6px 20px #0006;font:13px sans-serif;text-align:left';
+        document.body.appendChild(panel);
+        const search = document.createElement('input');
+        search.type = 'search';
+        search.placeholder = 'Search name or Node ID...';
+        search.style.cssText = 'width:100%;box-sizing:border-box;margin-bottom:8px;padding:6px';
+        const mode = document.createElement('select');
+        mode.style.cssText = 'width:100%;margin-bottom:8px';
+        for (const [value,label] of [['both','Sender + Relay'],['sender','Sender'],['relay','Relay (last byte)']]) {
+            mode.add(new Option(label,value));
+        }
+        const list = document.createElement('div');
+        list.style.cssText = 'max-height:240px;overflow:auto';
+        const clear = document.createElement('button');
+        clear.type = 'button';
+        clear.textContent = 'Clear filter';
+        clear.style.marginTop = '8px';
+        panel.append(search,mode,list,clear);
+        const refresh = () => {
+            const q = this._normalizeId(search.value.trim());
+            const candidates = new Map();
+            for (const n of this._nodes) {
+                const id = this._normalizeId(n.node_id);
+                if (id) candidates.set(id, [n.long_name,n.short_name,n.display_name].filter(Boolean).join(' '));
+            }
+            for (const p of this._packets) {
+                const id = this._normalizeId(p.source_id);
+                if (id && !candidates.has(id)) candidates.set(id,'');
+            }
+            for (const id of this._sourceIds) if (!candidates.has(id)) candidates.set(id,'');
+            list.replaceChildren();
+            for (const [id,name] of [...candidates].sort((a,b)=>(a[1]||a[0]).localeCompare(b[1]||b[0]))) {
+                if (!(id+' '+name.toLowerCase()).includes(q)) continue;
+                const label = document.createElement('label');
+                label.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px;cursor:pointer;overflow-wrap:anywhere';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = this._sourceIds.has(id);
+                cb.addEventListener('change', () => {
+                    if (cb.checked) this._sourceIds.add(id); else this._sourceIds.delete(id);
+                    apply();
+                });
+                label.append(cb,document.createTextNode((name ? name+' — ' : '')+'!'+id));
+                list.append(label);
+            }
+            if (!list.childElementCount) list.textContent = 'No matching nodes';
+        };
+        const apply = () => {
+            button.style.color = this._sourceIds.size ? '#22d3ee' : 'inherit';
+            button.textContent = this._sourceIds.size ? 'Source ('+this._sourceIds.size+') ▾' : 'Source ▾';
+            this._render();
+        };
+        const close = () => { panel.hidden = true; button.setAttribute('aria-expanded','false'); };
+        button.addEventListener('click', () => {
+            if (!panel.hidden) { close(); return; }
+            refresh();
+            const rect = button.getBoundingClientRect();
+            panel.style.left = Math.max(4,Math.min(rect.left,window.innerWidth-330))+'px';
+            panel.style.top = Math.max(4,Math.min(rect.bottom+4,window.innerHeight-360))+'px';
+            panel.hidden = false;
+            button.setAttribute('aria-expanded','true');
+            search.focus();
+        });
+        search.addEventListener('input',refresh);
+        mode.addEventListener('change',()=>{this._sourceMode=mode.value;apply();});
+        clear.addEventListener('click',()=>{this._sourceIds.clear();search.value='';mode.value='both';this._sourceMode='both';refresh();apply();});
+        document.addEventListener('click',e=>{if (!panel.contains(e.target)&&!button.contains(e.target)) close();});
+        document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!panel.hidden){close();button.focus();}});
+        window.addEventListener('resize',close);
     }
 
     _buildRow(packet) {

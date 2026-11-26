@@ -145,6 +145,7 @@ class SimplePacketFeed {
                 }else{
                     const values=new Set(this._packets.map(p=>String(this._columnValue(p,key)??'--')));
                     if(key==='hops') ['Direct','Relayed','Unknown'].forEach(v=>values.add(v));
+                    if(key==='type') ['text','position','telemetry','nodeinfo','routing','admin','traceroute','neighborinfo','waypoint','range_test','store_forward','detection_sensor','paxcounter','map_report','encrypted','unknown'].forEach(v=>values.add(v));
                     if(current) current.values.forEach(v=>values.add(v));
                     const list=document.createElement('div');list.style.cssText='max-height:240px;overflow:auto';
                     const selected=new Set(current?.values||values);

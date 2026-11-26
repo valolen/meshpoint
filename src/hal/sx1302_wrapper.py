@@ -502,7 +502,12 @@ class SX1302Wrapper:
         for i, ch in enumerate(plan.multi_sf_channels[:LGW_MULTI_NB]):
             conf = LgwConfRxifS()
             conf.enable = ch.enabled
-            conf.rf_chain = 0 if ch.frequency_hz <= radio_0_freq + 500_000 else 1
+            conf.rf_chain = (
+                ch.rf_chain if ch.rf_chain is not None
+                else (0 if ch.frequency_hz <= radio_0_freq + 500_000 else 1)
+            )
+            if ch.enabled:
+                logger.info("RX IF%d: %.4f MHz RF%d BW125", i, ch.frequency_hz / 1e6, conf.rf_chain)
             center = radio_0_freq if conf.rf_chain == 0 else plan.radio_1_freq_hz
             conf.freq_hz = ch.frequency_hz - center
 

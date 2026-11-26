@@ -11,6 +11,7 @@ class SimplePacketFeed {
         this._nodeByLastByte = new Map();
         this._onFocus = null;
         this._nodes = [];
+        this._filterResetters = [];
         this._sourceIds = new Set();
         this._sourceMode = 'both';
         this._installSourceFilter();
@@ -21,6 +22,25 @@ class SimplePacketFeed {
             MeshpointRadioViewFilter.wirePills(pills);
             document.addEventListener(MeshpointRadioViewFilter.EVENT, () => this._render());
         }
+        this._installClearAll(pills);
+    }
+
+    _installClearAll(pills) {
+        if (!pills) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'nc-pill';
+        btn.textContent = 'Clear all filters';
+        btn.style.marginLeft = '8px';
+        btn.addEventListener('click', () => {
+            this._sourceIds.clear();
+            this._sourceMode = 'both';
+            this._columnFilters.clear();
+            for (const reset of this._filterResetters) reset();
+            if (window.MeshpointRadioViewFilter) MeshpointRadioViewFilter.set('all');
+            else this._render();
+        });
+        pills.after(btn);
     }
 
     setOnFocus(cb) {
@@ -160,6 +180,7 @@ class SimplePacketFeed {
                 const clear=document.createElement('button');clear.type='button';clear.textContent='Clear filter';clear.style.marginTop='8px';
                 clear.addEventListener('click',e=>{e.stopPropagation();apply(null);build();});panel.append(clear);
             };
+            this._filterResetters.push(() => { btn.style.color='inherit'; close(); panel.replaceChildren(); });
             btn.addEventListener('click',()=>{
                 if(!panel.hidden){close();return;}
                 build();const rect=btn.getBoundingClientRect();
@@ -252,6 +273,11 @@ class SimplePacketFeed {
             this._render();
         };
         const close = () => { panel.hidden = true; button.setAttribute('aria-expanded','false'); };
+        this._filterResetters.push(() => {
+            search.value = ''; mode.value = 'both';
+            button.style.color = 'inherit'; button.textContent = 'Source ▾';
+            refresh(); close();
+        });
         button.addEventListener('click', () => {
             if (!panel.hidden) { close(); return; }
             refresh();

@@ -29,6 +29,151 @@
 
 ---
 
+
+## AXON Mesh — experimental concentrator branch
+
+This is the AXON development fork of [KMX415/Meshpoint](https://github.com/KMX415/meshpoint), based on Meshpoint v0.8.0. The `axon-multichannel` branch extends the native concentrator gateway into an active Meshtastic participant and bidirectional MQTT bridge, with a focus on repurposed Bobcat Miner 300 hardware and local-first operation.
+
+**Development status (2026-11-27):** native RF TX/RX, private-channel messaging, RF traceroute, private MQTT bridging and local MQTT traceroute responses have been exercised on an EU868 Bobcat G295 running 64-bit Armbian. This is a field-test branch, not an upstream stable release. Features below distinguish implemented behavior from outstanding validation.
+
+### What's new in AXON
+
+| Area | Branch additions |
+|---|---|
+| Concentrator | Opt-in eight multi-SF receive channels alongside the dedicated LongFast demodulator; explicit RF/IF chain configuration, SF mask and RX diagnostics |
+| Radio safety | Off-profile captures stored locally without entering active-network relay, MQTT, node-update or upstream paths |
+| MQTT | Per-channel Uplink, Downlink and own POSITION precision; native encrypted downlink; local delivery of packets addressed to the gateway |
+| Privacy | Separate MeshRadar public-channel allowlist and public-only packet statistics; private MQTT ciphertext without JSON/HA mirrors |
+| Traceroute | Native request/reply, selectable channel and hop limit, forward/return routes, per-hop SNR and searchable node history |
+| Dashboard | Resizable map/node panel, local-node indicator, direct-hop display, packet-column filters, sender/relay filtering, improved messaging layout |
+| Map | Individual node markers, names, stale-node styling, topology from traceroute and neighbor information, experimental coverage samples |
+| Storage | Persist actual received coding rate, preserve unknown values for older captures, improve selection of RF observations for node cards |
+
+### Bobcat Miner 300 and multichannel RX
+
+Follow the existing [Bobcat installation guide](docs/BOBCAT-300.md) for Armbian, SPI and GPIO preparation. The tested G295 uses `/dev/spidev5.0`, GPIO 149 for concentrator reset and GPIO 147 for TX amplifier enable. Hardware revisions can differ. Keep the compatible Armbian kernel/device tree/U-Boot packages pinned; do not blindly upgrade the OS or overwrite board-specific systemd overrides. The HAL must support the Meshtastic sync word (0x2B). No additional SX1262 radio is required for native Meshtastic TX/RX.
+
+The experimental plan below is specific to EU_868 LongFast, not a general-purpose frequency plan for every region.
+
+| IF | RF chain | Center frequency (MHz) | BW (kHz) | SF |
+|---|---|---:|---:|---|
+| 0 | 0 | 869.4625 | 125 | Multi-SF |
+| 1 | 0 | 869.5875 | 125 | Multi-SF |
+| 2 | 1 | 867.9000 | 125 | Multi-SF |
+| 3 | 1 | 868.1000 | 125 | Multi-SF |
+| 4 | 1 | 868.3000 | 125 | Multi-SF |
+| 5 | 1 | 868.5000 | 125 | Multi-SF |
+| 6 | 1 | 868.7000 | 125 | Multi-SF |
+| 7 | 0 | 869.0000 | 125 | Multi-SF |
+| 8 | 0 | 869.5250 | 250 | 11 (LongFast) |
+
+RF chain centers: 869.525 and 868.300 MHz. Enable with a separate systemd drop-in:
+
+```ini
+[Service]
+Environment=MESHPOINT_MULTICHANNEL_RX=1
+Environment=MESHPOINT_MULTISF_MASK=0xFE
+Environment=MESHPOINT_DEBUG_RX=1
+```
+
+The optional SF mask excludes SF5 in this example. Apply with systemctl daemon-reload and a service restart. To inspect additional demodulators:
+
+```bash
+journalctl -u meshpoint --since today --no-pager | grep -E 'RX (CRC_BAD |NO_CRC )?if=[0-7] '
+```
+
+LongFast RX/TX is field-tested. Additional IF chains have produced detections, particularly SF9 on IF2, but valid off-profile CRC_OK traffic has not yet been demonstrated in the recorded tests. CRC failures do not identify a protocol. The shared sync word is not simultaneous public LoRaWAN reception. Native TX remains on the configured active profile; independent service-channel TX is not implemented. Observe local spectrum, power and duty-cycle requirements.
+
+### MQTT bridge and channel configuration
+
+Use **Configuration → Channels** to edit channels, PSKs, Uplink, Downlink and own position precision together. **Save Channels** saves both channel and MQTT settings; restart the service for MQTT policy changes to take effect. MQTT itself must also be enabled in Configuration → MQTT. Broker, region/topic root, TLS and official map reporting remain separate settings.
+
+Example configuration (illustrative channel names; provision your own keys separately):
+
+```yaml
+mqtt:
+  enabled: true
+  topic_root: msh
+  region: EU_868/LT
+  channel_settings:
+    LongFast:
+      uplink_enabled: true
+      downlink_enabled: false
+      position_precision: 15
+    Private:
+      uplink_enabled: true
+      downlink_enabled: true
+      position_precision: 32
+upstream:
+  publish_channels:
+    - LongFast
+```
+
+- **Uplink:** RF-to-MQTT forwarding. Foreign Meshtastic packets require the sender's OK_TO_MQTT bit. Public POSITION data retains an existing precision of 15 bits or less; higher/unspecified precision is reduced to the configured public-policy cap of 15 bits.
+- **Private channels:** eligible captured packets retain their original ciphertext, source and packet ID. No private plaintext JSON or Home Assistant mirror. Eligible private traffic includes broadcast TEXT, POSITION, NODEINFO and TELEMETRY, and channel-encrypted directed TRACEROUTE and ROUTING.
+- **Own POSITION precision:** 0 disables the corresponding own MQTT position output; private channels support 1–32 bits and public channels are capped at 15. Private own positions are generated independently with unique IDs, sent directly to MQTT and do not require RF transmission. Official MapReport precision is a separate setting.
+- **Downlink:** subscribes to explicitly enabled channel topics under `msh/<region>/2/e/<channel>/+`. Validates envelope/channel/key, rejects retained messages, own packets and MQTT-marked loops, and uses a bounded queue and recent source/packet-ID cache. Native RF transmission shares the existing duty-cycle limiter. Packets addressed to the local gateway are stored locally with capture source `mqtt`, no invented RSSI/SNR, and are not retransmitted merely to deliver them locally.
+- **Own private traceroute:** sends the original encrypted probe to MQTT as well as attempting native RF TX, without depending on an RF echo. Recent successful local MQTT publications suppress echo uplink.
+
+Current limitations: decoded-envelope downlink, general directed TEXT/PKI MQTT messages, robust RF/MQTT cross-path deduplication, ACK/retry behavior, and full public downlink interoperability remain unfinished or unvalidated. Private AES-CTR channel encryption is not authenticated encryption; do not treat successful decoding or a channel hash as cryptographic sender authentication. MQTT publish acceptance by the local client is not proof of broker or recipient delivery.
+
+### MeshRadar privacy
+
+**Configuration → Advanced → MeshRadar public channels** provides a separate allowlist of standard public presets. Default: LongFast. The upstream packet filter requires native concentrator reception, broadcast destination, successful decoding with the default public key and matching allowed channel hash. Unknown/encrypted traffic, private keys, direct packets and ambiguous configured channel hashes are excluded. Upstream packet statistics use a separate accumulator rather than the mixed local node roster. Remote log retrieval and remote apply-update handlers are disabled in this branch.
+
+This is independent of MQTT Uplink/Downlink. The local database retains local observations; private MQTT traffic must not be forwarded to MeshRadar. Device registration/basic heartbeat and optional official MQTT MapReport are separate data paths. Private-channel exclusion and public text delivery have been verified in field tests; ongoing privacy testing is still required.
+
+### Traceroute and topology
+
+From a node card or its detail drawer, choose **Traceroute**, select a configured Meshtastic channel and hop limit (0–7), and start. The native SX1302 sends the request; the dashboard matches the response by source, destination and request ID. The packet detail shows forward and return routes, quarter-dB SNR values converted to dB, unknown-hop placeholders, capture source, and elapsed time including polling. Each node drawer has a collapsible traceroute history including origin, target and transit observations.
+
+The local map has toggleable node names, Meshpoint names, topology and experimental coverage samples. Topology uses recent decoded traceroute and neighbor observations; it is not proof of physical coverage. MQTT can create unknown-hop placeholders in firmware route reports. Mixed RF/MQTT path attribution, ACK handling and coverage visualization need more field validation; the interface does not invent missing hops or RF measurements.
+
+### AXON API extensions
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/messages/traceroute/{destination}?channel=1&hop_limit=4` | Native traceroute with selected channel and hop budget |
+| `GET /api/messages/channels` | Configured messaging channels |
+| `GET /api/packets/traceroutes/{node_id}?limit=10&offset=0` | Traceroute history including transit nodes |
+| `GET /api/analytics/topology?hours=24` | Recent topology observations |
+| `PUT /api/config/channels/mqtt` | Per-channel MQTT policy |
+| `PUT /api/config/upstream/channels` | Independent MeshRadar public-channel allowlist |
+
+### Install and update this branch
+
+For a prepared compatible host, clone the fork instead of the upstream repository:
+
+```bash
+git clone --branch axon-multichannel https://github.com/valolen/meshpoint.git /opt/meshpoint
+```
+
+Follow the hardware-specific setup guide before running the installer. On Bobcat, review the installer for generic OS upgrades and retain board-specific SPI/GPIO overrides. The tested installation required manual host preparation; a fully automated Bobcat installer has not yet been validated.
+
+For an existing AXON installation, verify that origin points to this fork and that the working tree has no conflicting changes. Back up configuration, identity keys and the database securely. For source-only updates with unchanged dependencies:
+
+```bash
+cd /opt/meshpoint
+git switch axon-multichannel
+git pull --ff-only origin axon-multichannel
+venv/bin/python -m compileall -q src
+sudo systemctl restart meshpoint
+```
+
+Hard-refresh the dashboard after frontend updates. README-only changes need no service restart. Do not follow the upstream main-branch update commands below for an AXON installation. Never commit local PSKs, broker credentials, upstream tokens, identity keys, private coordinates or databases.
+
+### Validation and roadmap
+
+Recorded field tests include public MQTT POSITION interoperability, private encrypted text, private own POSITION generation at 32 bits (client publish accepted; independent receipt still to be verified), direct and multihop RF traceroute, private RF/MQTT traceroute bridging, and local MQTT traceroute delivery without unnecessary RF retransmission. A focused 29-test suite for private position, broadcaster, resolver and MQTT publishing passed before the later downlink changes; it is not a full regression result for the current branch.
+
+Useful diagnostics: journalctl service logs, metadata-only MQTT subscriptions, and read-only SQLite packet queries. A separate local diagnostic monitor has been deployed for field testing; it is not bundled as a supported installer component.
+
+Milestone tags: [axon-traceroute-v1](https://github.com/valolen/meshpoint/tree/axon-traceroute-v1), [axon-map-topology-v1](https://github.com/valolen/meshpoint/tree/axon-map-topology-v1), [axon-radar-privacy-v1](https://github.com/valolen/meshpoint/tree/axon-radar-privacy-v1).
+
+Next: complete mixed RF/MQTT traceroute and ACK tests, improve shared deduplication and downlink compatibility, validate extra IF channels with a second concentrator, explore an authenticated inter-concentrator service channel, unified private multi-site mapping, and Meshtastic TCP/BLE client compatibility. These are development goals, not delivered features.
+
+---
+
 ## What Is This?
 
 A Raspberry Pi-based Meshtastic base station that sends and receives messages through an SX1302/SX1303 concentrator. The concentrator decodes SF7 through SF12 in parallel on one tuned frequency (eight demod chains). It transmits natively with up to 27 dBm output. Phones and nodes see it as a regular participant on the mesh.
@@ -76,7 +221,7 @@ Everything is managed from a browser dashboard: full chat with channels and DMs,
 
 **Cloud integration.** Optional WebSocket uplink to [Meshradar](https://meshradar.io) for aggregated multi-site mesh intelligence. Fleet management, city-wide maps, and packet history across all your Meshpoints.
 
-**Dual-protocol MQTT gateway.** Publish captured packets to community MQTT brokers and Home Assistant. Dual-protocol: Meshtastic (protobuf) and MeshCore (JSON) from a single device. Two-gate privacy model ensures private channel data never leaks. Optional JSON publishing, HA auto-discovery, and configurable location precision.
+**Dual-protocol MQTT gateway.** Publish captured packets to community MQTT brokers and Home Assistant. Dual-protocol: Meshtastic (protobuf) and MeshCore (JSON) from a single device. The AXON branch adds per-channel policy and experimental encrypted downlink; see the AXON privacy and MQTT sections above for behavior and limitations. Optional JSON publishing, HA auto-discovery, and configurable location precision.
 
 **Companion firmware from the dashboard.** Flash official Meshtastic or MeshCore USB companion firmware from Configuration → Firmware (GitHub releases via esptool), including installed-version readout before you flash. External flash still works from [meshcore.io/flasher](https://meshcore.io/flasher) or the Meshtastic web flasher when you prefer that path.
 
@@ -287,6 +432,8 @@ See the [Hardware Matrix](docs/HARDWARE-MATRIX.md) for supported configurations.
 
 ## Install
 
+> The following is upstream installation documentation. AXON users should follow the branch-specific instructions above.
+
 The standard installation is for **SX1302/SX1303 concentrator gateways**, including
 repurposed Helium miners such as the RAK V2 and SenseCAP M1.
 
@@ -380,6 +527,8 @@ FastAPI server on port 8080:
 ---
 
 ## Updating
+
+> The commands below target upstream main, not axon-multichannel. Follow the AXON update instructions above to retain this fork's features.
 
 **Optional apps in v0.8.0:** core updates and plugin updates are separate. Disable and restart before replacing or removing an installed app. Updating a catalog pin does not update or enable its apps. Uninstall retains configuration, separately stored data, and shared native dependencies. See [plugin lifecycle details](docs/PLUGINS.md#updates-and-removal). After the v0.8.0 release is published, select Stable to use the released build; the next RC track is v0.8.1. The stable commands below switch to `main`.
 

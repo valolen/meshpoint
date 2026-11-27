@@ -168,6 +168,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     const nodeDrawer = new NodeDrawer('node-drawer', {
         onSendMessage: (node) => _openMessagingForNode(node),
         onTraceroute: (node) => { if (!nodeCards._isLocal(node)) nodeCards._runTraceroute(node.node_id); },
+        traceOptions: () => {
+            const norm = id => String(id || '').replace(/^!/, '').toLowerCase();
+            const nodes = new Map(nodeCards._nodes.map(n => [norm(n.node_id), n]));
+            return {
+                localNodeId: nodeCards._localNodeId,
+                formatNodeId: id => { const n = nodes.get(norm(id)); return n?.display_name || n?.long_name || n?.short_name || '!' + norm(id); },
+                shortNodeId: id => nodes.get(norm(id))?.short_name || norm(id).slice(-4)
+            };
+        },
         onViewOnMap: (node) => {
             if (node.latitude && node.longitude) {
                 nodeMap.centerOn(node.latitude, node.longitude);

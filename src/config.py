@@ -241,6 +241,8 @@ class PositionConfig:
 
 @dataclass
 class MqttConfig:
+    # Per-channel MQTT policy; absent entries retain legacy uplink settings.
+    channel_settings: dict[str, dict] = field(default_factory=dict)
     enabled: bool = False
     broker: str = "mqtt.meshtastic.org"
     port: int = 1883

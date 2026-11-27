@@ -234,26 +234,37 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         import base64
 
         def radar_packet_allowed(packet):
+            def block(reason):
+                logger.info("RADAR BLOCK id=%s ch=%02x reason=%s",
+                            packet.packet_id, packet.channel_hash, reason)
+                return False
             try:
-                if (packet.protocol.value != "meshtastic"
-                        or packet.capture_source != "concentrator"
-                        or packet.destination_id.lower() != "ffffffff"
-                        or not packet.decrypted
-                        or packet.packet_type.value in ("encrypted", "unknown", "admin")
-                        or packet.matched_channel_index is None
-                        or not packet.raw_radio_packet):
-                    return False
+                if packet.protocol.value != "meshtastic":
+                    return block("protocol")
+                if packet.capture_source != "concentrator":
+                    return block("capture_source=" + str(packet.capture_source))
+                if packet.destination_id.lower() != "ffffffff":
+                    return block("not broadcast")
+                if not packet.decrypted:
+                    return block("not decrypted")
+                if packet.packet_type.value in ("encrypted", "unknown", "admin"):
+                    return block("packet type")
+                if packet.matched_channel_index is None:
+                    return block("no key provenance")
+                if not packet.raw_radio_packet:
+                    return block("no raw frame")
                 keys = pipeline._crypto.get_all_keys()
                 if keys[packet.matched_channel_index] != _DEFAULT_PSK:
-                    return False
+                    return block("non-public key")
                 if packet.channel_hash != _xor_hash("LongFast", _DEFAULT_PSK):
-                    return False
+                    return block("not LongFast")
                 for name, encoded in config.meshtastic.channel_keys.items():
                     if _xor_hash(name, _expand_key(base64.b64decode(encoded))) == packet.channel_hash:
-                        return False
+                        return block("channel hash collision")
+                logger.info("RADAR ALLOW id=%s ch=%02x", packet.packet_id, packet.channel_hash)
                 return True
-            except (ValueError, TypeError, IndexError, AttributeError):
-                return False
+            except (ValueError, TypeError, IndexError, AttributeError) as exc:
+                return block(type(exc).__name__)
 
         upstream = UpstreamClient(
             config.upstream, identity,

@@ -117,3 +117,25 @@ async def update_upstream(
         "restart_required": True,
         "upstream": build_upstream_status(upstream),
     }
+
+
+class RadarChannelsUpdate(BaseModel):
+    publish_channels: list[str]
+
+
+@router.put("/upstream/channels")
+async def update_radar_channels(
+    req: RadarChannelsUpdate,
+    claims: SessionClaims = Depends(require_admin),
+    audit: AuditLogWriter = Depends(get_audit_writer),
+):
+    if _config is None:
+        raise HTTPException(503, "Config not loaded")
+    if any(name not in STANDARD_PRESETS for name in req.publish_channels):
+        raise HTTPException(400, "Only standard public channels are allowed")
+    channels = list(dict.fromkeys(req.publish_channels))
+    with audit.timed_action(user=claims.subject, action="config.radar_channels",
+                            params={"publish_channels": channels}):
+        save_section_to_yaml("upstream", {"publish_channels": channels})
+        _config.upstream.publish_channels = channels
+    return {"saved": True, "restart_required": True}

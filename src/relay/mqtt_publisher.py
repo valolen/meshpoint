@@ -431,7 +431,12 @@ class MqttPublisher:
     def _passes_safety_gates(self, packet: Packet) -> bool:
         if not self._config.enabled or packet.via_mqtt:
             return False
-        if not is_broadcast(packet):
+        private_trace = (
+            packet.protocol == Protocol.MESHTASTIC
+            and packet.packet_type in (PacketType.TRACEROUTE, PacketType.ROUTING)
+            and self._resolve_channel_name(packet) in self._channel_keys
+        )
+        if not is_broadcast(packet) and not private_trace:
             self._blocked_destination_count += 1
             now = time.monotonic()
             if self._last_privacy_log_monotonic is None or now - self._last_privacy_log_monotonic >= 60:
@@ -464,7 +469,7 @@ class MqttPublisher:
             return False
         if not packet.raw_radio_packet or len(packet.raw_radio_packet) <= 16:
             return False
-        if packet.packet_type not in (PacketType.TEXT, PacketType.NODEINFO, PacketType.TELEMETRY, PacketType.POSITION):
+        if packet.packet_type not in (PacketType.TEXT, PacketType.NODEINFO, PacketType.TELEMETRY, PacketType.POSITION, PacketType.TRACEROUTE, PacketType.ROUTING):
             return False
         try:
             key = _expand_key(base64.b64decode(self._channel_keys[name], validate=True))
@@ -568,7 +573,7 @@ class MqttPublisher:
             source = getattr(pkt, "from")
             if (not 0 < source < 0xffffffff or not pkt.id or
                     f"{source:08x}" == self._node_id or pkt.via_mqtt or
-                    pkt.to != 0xffffffff or pkt.hop_limit > 7 or
+                    not 0 < pkt.to <= 0xffffffff or pkt.hop_limit > 7 or
                     pkt.hop_start > 7 or pkt.hop_limit > pkt.hop_start):
                 return
             key = _expand_key(base64.b64decode(keys[name], validate=True))
@@ -584,9 +589,13 @@ class MqttPublisher:
             nonce = struct.pack("<QI", pkt.id, source) + bytes(4)
             decryptor = Cipher(algorithms.AES(key), modes.CTR(nonce)).decryptor()
             data = Data.FromString(decryptor.update(pkt.encrypted) + decryptor.finalize())
-            if data.portnum not in (1, 3, 4, 67):
+            if pkt.to == 0xffffffff:
+                if data.portnum not in (1, 3, 4, 67):
+                    return
+            elif (name not in self._channel_keys or key == _DEFAULT_PSK
+                  or data.portnum not in (5, 70)):
                 return
-            flags = pkt.hop_limit | (pkt.hop_start << 5)
+            flags = pkt.hop_limit | (pkt.hop_start << 5) | (0x08 if pkt.want_ack else 0)
             raw = struct.pack("<IIIBBBB", pkt.to, source, pkt.id, flags,
                               channel_hash, 0, 0) + pkt.encrypted
             if not 16 < len(raw) <= 255 or self._downlink_pending >= 4:

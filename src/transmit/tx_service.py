@@ -694,6 +694,44 @@ class TxService:
             packet_bytes, packet_id, label="telemetry reply"
         )
 
+    def build_position_packet(
+        self,
+        latitude: float,
+        longitude: float,
+        altitude: float | None = None,
+        *,
+        channel: int = 0,
+        precision_bits: int | None = None,
+    ) -> tuple[bytes, int, int] | None:
+        """Build, but do not transmit, an encrypted POSITION packet.
+
+        This is used by the MQTT own-position path for private channels so
+        MQTT can carry the exact ciphertext a Meshtastic node would emit,
+        without exposing plaintext coordinates to the broker.
+        """
+        builder = self._get_builder()
+        if builder is None or not hasattr(builder, "build_position"):
+            return None
+
+        packet_id = self._next_packet_id()
+        channel_hash, channel_key = self._resolve_channel(channel)
+        hop_limit = self._config.hop_limit if self._config else DEFAULT_HOP_LIMIT
+        packet_bytes = builder.build_position(
+            source_id=self._source_node_id,
+            packet_id=packet_id,
+            latitude=latitude,
+            longitude=longitude,
+            altitude=altitude,
+            precision_bits=precision_bits,
+            channel_key=channel_key,
+            channel_hash=channel_hash,
+            hop_limit=hop_limit,
+            hop_start=hop_limit,
+        )
+        if packet_bytes is None:
+            return None
+        return packet_bytes, packet_id, channel_hash
+
     async def send_position(
         self,
         latitude: float,
@@ -703,28 +741,11 @@ class TxService:
         if not self.meshtastic_enabled:
             return SendResult(success=False, protocol="meshtastic", error="TX unavailable")
 
-        builder = self._get_builder()
-        if builder is None or not hasattr(builder, "build_position"):
-            return SendResult(success=False, protocol="meshtastic", error="Builder unavailable")
-
-        packet_id = self._next_packet_id()
-        channel_hash, channel_key = self._resolve_channel(0)
-        hop_limit = self._config.hop_limit if self._config else DEFAULT_HOP_LIMIT
-
-        packet_bytes = builder.build_position(
-            source_id=self._source_node_id,
-            packet_id=packet_id,
-            latitude=latitude,
-            longitude=longitude,
-            altitude=altitude,
-            channel_key=channel_key,
-            channel_hash=channel_hash,
-            hop_limit=hop_limit,
-            hop_start=hop_limit,
-        )
-        if packet_bytes is None:
+        built = self.build_position_packet(latitude, longitude, altitude)
+        if built is None:
             return SendResult(success=False, protocol="meshtastic", error="Position build failed")
 
+        packet_bytes, packet_id, _channel_hash = built
         return await self._send_built_packet(packet_bytes, packet_id, label="position")
 
     @staticmethod

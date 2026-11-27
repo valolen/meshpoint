@@ -53,7 +53,10 @@ def enrich_config_payload(
         base["device"].update(radio_hat=device.radio_hat, radio_protocol=device.radio_protocol)
     elif platform == "node":
         base["platform_ui"] = {"variant": "wismesh_node"}
+    from src.relay.channel_resolver import STANDARD_PRESETS
     base["upstream"] = {
+        "publish_channels": upstream.publish_channels,
+        "available_channels": STANDARD_PRESETS,
         "url": upstream.url,
         "reconnect_interval_seconds": upstream.reconnect_interval_seconds,
         "buffer_max_size": upstream.buffer_max_size,

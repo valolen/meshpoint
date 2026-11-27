@@ -194,10 +194,14 @@ class MqttPublisher:
         name = self._resolve_channel_name(packet)
         policy = self._channel_policies.get(name, {})
         precision = policy.get("position_precision", self._config.location_precision)
+        own = packet.source_id.lower().lstrip("!") == self._gateway_id.lower().lstrip("!")
+        if packet.protocol == Protocol.MESHTASTIC and not own:
+            if (packet.decoded_payload or {}).get("ok_to_mqtt") is not True:
+                return False
         private = packet.protocol == Protocol.MESHTASTIC and name in self._channel_keys
         if private:
             # Never reconstruct or mirror private payloads as plaintext.
-            if not self._private_packet_allowed(packet, name, precision):
+            if not self._private_packet_allowed(packet, name):
                 return False
             encrypted = replace(packet, encrypted_payload=packet.raw_radio_packet[16:],
                                 remote_channel_name=name)
@@ -218,8 +222,7 @@ class MqttPublisher:
                 or packet.channel_hash != _xor_hash(name, _DEFAULT_PSK)
             ):
                 return False
-            if type(precision) is int:
-                precision = min(15, max(0, precision))
+            precision = min(15, max(0, precision)) if own and type(precision) is int else 15
         packet = prepare_packet(packet, precision)
         # Only preserve original RF ciphertext for known non-position broadcasts.
         # Do not bypass the shared location filter for POSITION or unknown types.
@@ -321,7 +324,7 @@ class MqttPublisher:
 
         return True
 
-    def _private_packet_allowed(self, packet: Packet, name: str, precision) -> bool:
+    def _private_packet_allowed(self, packet: Packet, name) -> bool:
         if not packet.decrypted or packet.capture_source != "concentrator":
             return False
         if not packet.raw_radio_packet or len(packet.raw_radio_packet) <= 16:
@@ -343,12 +346,6 @@ class MqttPublisher:
             from src.relay.mqtt_formatter import PORTNUM_MAP
             if data.portnum != PORTNUM_MAP.get(packet.packet_type) or data.payload != packet.raw_app_payload:
                 return False
-            if packet.packet_type == PacketType.POSITION:
-                bits = (packet.decoded_payload or {}).get("precision_bits")
-                if type(precision) is not int or not 1 <= precision <= 32:
-                    return False
-                if type(bits) is not int or not 1 <= bits <= precision:
-                    return False
             return True
         except Exception:
             return False

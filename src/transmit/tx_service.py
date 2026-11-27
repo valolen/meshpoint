@@ -1126,9 +1126,9 @@ class TxService:
         if encoded_snr is not None:
             snr_towards.append(encoded_snr)
 
-        requester = int(original.source_id, 16)
-        route_back = [requester]
-        snr_back = [encoded_snr] if encoded_snr is not None else []
+        # The return path is populated by relays and the requester on RX.
+        route_back: list[int] = []
+        snr_back: list[int] = []
 
         return route_nodes, snr_towards, route_back, snr_back
 

@@ -585,6 +585,7 @@ class PipelineCoordinator:
                 self._config.mqtt,
                 device_name,
                 channel_keys=self._config.meshtastic.channel_keys or None,
+                node_id=self._config.transmit.node_id,
             )
             if self._mqtt.connect():
                 logger.info(

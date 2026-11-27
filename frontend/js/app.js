@@ -167,6 +167,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const nodeDrawer = new NodeDrawer('node-drawer', {
         onSendMessage: (node) => _openMessagingForNode(node),
+        onTraceroute: (node) => { if (!nodeCards._isLocal(node)) nodeCards._runTraceroute(node.node_id); },
         onViewOnMap: (node) => {
             if (node.latitude && node.longitude) {
                 nodeMap.centerOn(node.latitude, node.longitude);

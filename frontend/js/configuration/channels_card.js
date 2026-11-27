@@ -30,8 +30,8 @@ class ChannelsConfigCard {
                         name is editable. Additional channels are
                         decryption keys: paste the base64 PSK from
                         the Meshtastic mobile app and the hash will
-                        recompute server-side. Save applies at
-                        runtime with no service restart.
+                        recompute server-side. Save Channels also saves MQTT settings.
+                        MQTT or channel changes require a service restart.
                     </p>
                 </header>
                 <div class="cfg-mc-channels">
@@ -69,7 +69,6 @@ class ChannelsConfigCard {
                         Save Channels
                     </button>
                 </div>
-                <div class="cfg-card__actions"><button type="button" class="terminal-button" data-mqtt-channel-save>Save MQTT settings</button></div>
                 <p class="cfg-status" data-ch-status aria-live="polite"></p>
             </article>
 
@@ -77,7 +76,6 @@ class ChannelsConfigCard {
         this._tbody = this._root.querySelector('[data-ch-body]');
         this._statusEl = this._root.querySelector('[data-ch-status]');
         this._wireToolbar();
-        this._root.querySelector('[data-mqtt-channel-save]').addEventListener('click', () => this._saveMqttPolicy());
     }
 
     render(config) {
@@ -90,7 +88,6 @@ class ChannelsConfigCard {
         const channels = (config && config.channels) || [];
         this._channels = channels;
         this._renderRows();
-        this._root.querySelector("[data-mqtt-channel-save]").hidden = !!this._nativeRadio;
         if (config?.channels_error) this._setStatus('error', config.channels_error);
     }
 
@@ -102,26 +99,6 @@ class ChannelsConfigCard {
         return `<td><input type="checkbox" aria-label="MQTT uplink" data-policy="uplink_enabled" ${m.uplink_enabled ? 'checked' : ''}></td>
             <td><input type="checkbox" aria-label="MQTT downlink" title="Experimental encrypted broadcast downlink; restart required" data-policy="downlink_enabled" ${m.downlink_enabled ? 'checked' : ''}></td>
             <td><input class="ch-table__name-input" style="width:64px" aria-label="Own position precision" type="number" min="0" max="${max}" step="1" required value="${bits}" data-policy="position_precision"></td>`;
-    }
-
-    async _saveMqttPolicy() {
-        if (this._tbody.querySelectorAll("tr[data-index]").length !== this._channels.length) { this._setStatus("error", "Save channel changes first."); return; }
-        const settings = Object.create(null);
-        for (const row of this._tbody.querySelectorAll('tr[data-index]')) {
-            const bits = row.querySelector('[data-policy="position_precision"]');
-            if (!bits) continue;
-            if (!bits.reportValidity()) return;
-            const original = this._channels[Number(row.dataset.index)];
-            if (!original || original.name !== row.querySelector('[data-field="name"]').value.trim()) { this._setStatus("error", "Save channel changes first."); return; }
-            settings[original.name] = {
-                uplink_enabled: row.querySelector('[data-policy="uplink_enabled"]').checked,
-                downlink_enabled: row.querySelector('[data-policy="downlink_enabled"]').checked,
-                position_precision: Number(bits.value),
-            };
-        }
-        const res = await this._api.put('/api/config/channels/mqtt', settings);
-        this._setStatus(res ? 'success' : 'error', res ? 'MQTT settings saved. Restart required.' : 'Save failed.');
-        if (res) { this._api.signalRestart('Channel MQTT settings saved.'); await this._api.refresh(); }
     }
 
     _renderRows() {
@@ -285,7 +262,7 @@ class ChannelsConfigCard {
                 </label>
             </td>
         `;
-        tr.insertAdjacentHTML("beforeend", "<td>—</td><td>—</td><td>—</td>");
+        tr.insertAdjacentHTML("beforeend", this._mqttCells({mqtt: {max_position_precision: 32, position_precision: 0}}));
         this._wireRowHandlers(tr);
         this._tbody.appendChild(tr);
         this._updateAddBtn();
@@ -323,14 +300,50 @@ class ChannelsConfigCard {
             channels.push({ index: idx, name, psk_b64: psk, enabled });
         });
 
+        const settings = Object.create(null);
+        for (const row of rows) {
+            const ch = channels[Number(row.dataset.index)];
+            if (!ch.name || (ch.index !== 0 && ch.enabled && !ch.psk_b64)) {
+                this._setStatus('error', 'Enter a channel name and key.');
+                return;
+            }
+            if (!ch.enabled) continue;
+            const bits = row.querySelector('[data-policy="position_precision"]');
+            if (!bits) continue;
+            if (!bits.reportValidity()) return;
+            if (Object.hasOwn(settings, ch.name)) {
+                this._setStatus('error', 'Channel names must be unique.');
+                return;
+            }
+            settings[ch.name] = {
+                uplink_enabled: row.querySelector('[data-policy="uplink_enabled"]').checked,
+                downlink_enabled: row.querySelector('[data-policy="downlink_enabled"]').checked,
+                position_precision: Number(bits.value),
+            };
+        }
+        const button = this._root.querySelector('[data-ch-save]');
+        button.disabled = true;
         this._setStatus('pending', 'Saving…');
-        const res = await this._api.put('/api/config/channels', { channels });
-        if (res) {
-            this._setStatus('success', 'Channels saved.');
-            this._api.toast('Channels saved');
+        try {
+            const res = await this._api.put('/api/config/channels', { channels });
+            if (!res) {
+                this._setStatus('error', 'Channel save failed.');
+                return;
+            }
+            if (!this._nativeRadio) {
+                const mqtt = await this._api.put('/api/config/channels/mqtt', settings);
+                if (!mqtt) {
+                    this._setStatus('error', 'Channels saved, but MQTT settings failed. Retry Save Channels.');
+                    return;
+                }
+                this._api.signalRestart('Channels and MQTT settings saved.');
+            }
             await this._api.refresh();
-        } else {
-            this._setStatus('error', 'Save failed.');
+            const message = this._nativeRadio ? 'Channels saved.' : 'Channels and MQTT settings saved. Restart required.';
+            this._setStatus('success', message);
+            this._api.toast(message);
+        } finally {
+            button.disabled = false;
         }
     }
 

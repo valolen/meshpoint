@@ -803,10 +803,16 @@ def _build_channel_list(mt_config) -> list[dict]:
         mqtt = _config.mqtt
         for ch in channels:
             policy = mqtt.channel_settings.get(ch["name"], {})
+            from src.relay.channel_resolver import _DEFAULT_PSK, _expand_key
+            try:
+                public = _expand_key(base64.b64decode(ch["psk_b64"], validate=True)) == _DEFAULT_PSK
+            except ValueError:
+                public = True
             ch["mqtt"] = {
+                "max_position_precision": 15 if public else 32,
                 "uplink_enabled": policy.get("uplink_enabled", ch["name"] in mqtt.publish_channels),
                 "downlink_enabled": policy.get("downlink_enabled", False),
-                "position_precision": policy.get("position_precision", {"none": 0, "approximate": 15, "exact": 32}.get(mqtt.location_precision, 0)),
+                "position_precision": min(15 if public else 32, policy.get("position_precision", {"none": 0, "approximate": 15, "exact": 32}.get(mqtt.location_precision, 0) if ch["index"] == 0 else 0)),
             }
     return channels
 

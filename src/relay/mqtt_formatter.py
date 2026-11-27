@@ -107,6 +107,8 @@ class MeshtasticMqttFormatter:
         if packet.signal and packet.signal.snr is not None:
             mesh_pkt.rx_snr = packet.signal.snr
 
+        if (packet.decoded_payload or {}).get("ok_to_mqtt") is True:
+            mesh_pkt.decoded.bitfield = 1
         mesh_pkt.decoded.portnum = portnum
         mesh_pkt.decoded.payload = inner_bytes
 

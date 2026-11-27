@@ -48,6 +48,15 @@
     <link rel="stylesheet" href="css/terminal.css?v=terminal-20260911-1" />
     <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
     <link rel="stylesheet" href="css/responsive.css" />
+    <style>
+        .dashboard__splitter { display: none; }
+        @media (min-width: 1025px) {
+            .dashboard__main { grid-template-columns: minmax(0, 1fr) 8px minmax(0, var(--nodes-width, 350px)); gap: 0; }
+            .dashboard__splitter { display: block; cursor: col-resize; touch-action: none; position: relative; }
+            .dashboard__splitter::after { content: ""; position: absolute; inset: 0 3px; border-radius: 2px; background: currentColor; opacity: .15; }
+            .dashboard__splitter:hover::after, .dashboard__splitter:focus-visible::after { opacity: .8; }
+        }
+    </style>
     <link rel="stylesheet" href="css/plugin_pages.css?v=store-20260911-2">
     <link rel="stylesheet" href="css/plugin_store.css?v=source-setup-20260912">
 </head>
@@ -358,6 +367,7 @@
                             </div>
                         </section>
 
+                        <div class="dashboard__splitter" role="separator" aria-label="Resize nodes panel" aria-orientation="vertical" tabindex="0" title="Drag to resize; double-click to reset"></div>
                         <section class="dashboard__side">
                             <div class="panel panel--nodes">
                                 <div class="panel__header">
@@ -1013,5 +1023,45 @@
     <script src="js/settings/plugin_pages.js"></script>
     <script src="js/viewer_access.js"></script>
     <script src="js/app.js"></script>
+<script>
+    (() => {
+        const grip = document.querySelector('.dashboard__splitter');
+        const main = grip.parentElement;
+        const key = 'axon-dashboard-nodes-width';
+        let preferred = 350;
+        try { preferred = Number(localStorage.getItem(key)) || 350; } catch (_) {}
+        const apply = () => {
+            if (!main.clientWidth) return;
+            const max = Math.max(280, main.clientWidth - 288);
+            const width = Math.min(max, Math.max(280, preferred));
+            main.style.setProperty('--nodes-width', width + 'px');
+            grip.setAttribute('aria-valuemin', '280');
+            grip.setAttribute('aria-valuemax', String(max));
+            grip.setAttribute('aria-valuenow', String(width));
+        };
+        const save = () => { try { localStorage.setItem(key, String(preferred)); } catch (_) {} };
+        grip.addEventListener('pointerdown', e => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            grip.setPointerCapture(e.pointerId);
+        });
+        grip.addEventListener('pointermove', e => {
+            if (!grip.hasPointerCapture(e.pointerId)) return;
+            preferred = Math.round(main.getBoundingClientRect().right - e.clientX - 4);
+            apply();
+        });
+        grip.addEventListener('lostpointercapture', save);
+        grip.addEventListener('dblclick', () => { preferred = 350; apply(); save(); });
+        grip.addEventListener('keydown', e => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(e.key)) return;
+            e.preventDefault();
+            preferred = e.key === 'Home' ? 350 : Number(grip.getAttribute('aria-valuenow')) + (e.key === 'ArrowLeft' ? 20 : -20);
+            apply(); save();
+        });
+        if (typeof ResizeObserver === 'function') new ResizeObserver(apply).observe(main);
+        window.addEventListener('resize', apply);
+        apply();
+    })();
+    </script>
 </body>
 </html>

@@ -22,8 +22,7 @@ class MqttConfigCard {
                     <h3 class="cfg-card__title">MQTT</h3>
                     <p class="cfg-card__hint">
                         Community MQTT gateway (meshmap.net, Home Assistant, etc.).
-                        Gate 1: enable below. Gate 2: only channels in the allowlist
-                        are published. Undecrypted packets never leave the device.
+                        Enable below and manage per-channel permissions under Channels. Undecrypted packets never leave the device.
                     </p>
                 </header>
                 <div class="mqtt-runtime mqtt-runtime--disabled" data-mqtt-runtime hidden>
@@ -81,26 +80,9 @@ class MqttConfigCard {
                                    placeholder="auto-derived if blank" data-mqtt-gateway>
                         </label>
                     </fieldset>
-                    <fieldset class="cfg-fieldset">
-                        <legend class="cfg-fieldset__legend">Privacy (gate 2)</legend>
-                        <label class="cfg-field">
-                            <span class="cfg-field__label">Publish channels</span>
-                            <textarea class="cfg-field__input cfg-field__textarea"
-                                      rows="4" data-mqtt-channels
-                                      placeholder="One channel name per line"></textarea>
-                            <span class="cfg-field__hint">List each public channel you want
-                                to publish (for example, LongTurbo). Add private names only on
-                                your own broker.</span>
-                        </label>
-                        <label class="cfg-field">
-                            <span class="cfg-field__label">Location on MQTT</span>
-                            <select class="cfg-field__input" data-mqtt-loc-precision>
-                                <option value="exact">Exact coordinates</option>
-                                <option value="approximate" data-approximate-option>Approximate</option>
-                                <option value="none">None (strip from MQTT)</option>
-                            </select>
-                        </label>
-                    </fieldset>
+                    <p class="cfg-field__hint">Meshtastic uplink, downlink and own position precision are configured under Channels. Public transit positions are capped at 15 bits.</p>
+                    <textarea data-mqtt-channels hidden></textarea>
+                    <input type="hidden" data-mqtt-loc-precision>
                     <fieldset class="cfg-fieldset">
                         <legend class="cfg-fieldset__legend">Formats</legend>
                         <label class="cfg-field cfg-field--toggle">
@@ -150,7 +132,7 @@ class MqttConfigCard {
                         </div>
                     </fieldset>
                     <div class="cfg-preview" data-mqtt-previews>
-                        <span class="cfg-preview__label">Topic preview for channels above</span>
+                        <span class="cfg-preview__label">Topic preview</span>
                         <code class="cfg-preview__value" data-mqtt-preview-mt>--</code>
                         <code class="cfg-preview__value" data-mqtt-preview-mc>--</code>
                         <code class="cfg-preview__value" data-mqtt-preview-json style="display:none">--</code>
@@ -228,6 +210,7 @@ class MqttConfigCard {
             const gid = mqtt.gateway_id || '';
             this._gateway.value = gid.startsWith('!') ? gid : gid;
         }
+        this._channelPolicies = config?.channels || [];
         if (this._channels) {
             const list = mqtt.publish_channels || ['LongFast', 'MeshCore'];
             this._channels.value = list.join('\n');
@@ -324,7 +307,10 @@ class MqttConfigCard {
     }
 
     _renderPreviews() {
-        const channels = this._parseChannels();
+        const legacy = this._parseChannels();
+        const configured = this._channelPolicies || [];
+        const channels = [...legacy.filter(name => !configured.some(ch => ch.name === name)),
+            ...configured.filter(ch => ch.mqtt?.uplink_enabled).map(ch => ch.name)];
         const meshtasticChannels = channels.filter(
             (name) => name.toLowerCase() !== 'meshcore',
         );
@@ -347,7 +333,7 @@ class MqttConfigCard {
                 && meshtasticChannels.length > 0;
             this._previewJson.style.display = show ? '' : 'none';
             if (show) {
-                this._previewJson.textContent = meshtasticChannels.map(
+                this._previewJson.textContent = meshtasticChannels.filter(name => !this._channelPolicies?.some(ch => ch.name === name && ch.index !== 0)).map(
                     (name) => this._exampleTopic('json', name),
                 ).join('\n');
             } else {
@@ -382,10 +368,7 @@ class MqttConfigCard {
     async _onSubmit(event) {
         event.preventDefault();
         const channels = this._parseChannels();
-        if (!channels.length) {
-            this._setStatus('error', 'Add at least one publish channel.');
-            return;
-        }
+
         const payload = {
             enabled: this._enabled.checked,
             broker_host: this._host.value.trim(),
@@ -395,7 +378,7 @@ class MqttConfigCard {
             topic_root: this._topicRoot.value.trim() || 'msh',
             region_segment: this._region.value.trim() || 'US',
             gateway_id: this._gateway.value.trim(),
-            publish_channels: channels,
+            publish_channels: channels.length ? channels : ['LongFast'],
             publish_json: this._json.checked,
             location_precision: this._locPrecision.value,
             homeassistant_discovery: this._ha.checked,

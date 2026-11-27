@@ -198,6 +198,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
         message_repo = MessageRepository(pipeline.database)
         tx_service = _build_tx_service(config, pipeline)
+        if tx_service is not None and pipeline.mqtt_publisher is not None:
+            pipeline.mqtt_publisher.set_local_node_id(tx_service.source_node_id)
         mc_source = _find_meshcore_source(pipeline)
         meshcore_tx_ref = None
         if tx_service and hasattr(tx_service, '_meshcore_tx'):

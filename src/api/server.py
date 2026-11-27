@@ -200,6 +200,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         tx_service = _build_tx_service(config, pipeline)
         if tx_service is not None and pipeline.mqtt_publisher is not None:
             pipeline.mqtt_publisher.set_local_node_id(tx_service.source_node_id)
+            if tx_service.meshtastic_enabled and tx_service._wrapper is not None:
+                from src.transmit.tx_service import PRESET_DISPLAY_NAMES
+                primary_name = config.meshtastic.primary_channel_name or PRESET_DISPLAY_NAMES.get(
+                    (config.radio.spreading_factor, int(config.radio.bandwidth_khz)), "LongFast"
+                )
+                pipeline.mqtt_publisher.configure_downlink(
+                    tx_service, primary_name, config.meshtastic.default_key_b64
+                )
         mc_source = _find_meshcore_source(pipeline)
         meshcore_tx_ref = None
         if tx_service and hasattr(tx_service, '_meshcore_tx'):

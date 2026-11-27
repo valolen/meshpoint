@@ -48,6 +48,9 @@ class PacketDetailModal {
         const body = modal.querySelector('.pdm-modal__body');
         body.appendChild(this._buildLayer('RF', this._rfRows(packet)));
         body.appendChild(this._buildLayer('Mesh', this._meshRows(packet, opts.formatNodeId)));
+        if (packet.packet_type === 'traceroute' && packet.decrypted && packet.decoded_payload) {
+            body.appendChild(this._buildLayer('Route', this._traceRows(packet, opts)));
+        }
         body.appendChild(this._buildLayer('Payload', this._payloadRows(packet)));
         body.appendChild(this._buildLayer('Capture', this._captureRows(packet)));
 
@@ -141,6 +144,39 @@ class PacketDetailModal {
             wrap.appendChild(btn);
         }
         return wrap;
+    }
+
+    _traceRows(packet, opts) {
+        const p = packet.decoded_payload;
+        const id = v => typeof v === 'number' ? (v >>> 0).toString(16).padStart(8, '0') : String(v).replace(/^!/, '').toLowerCase();
+        const fmt = v => id(v) === 'ffffffff' ? 'Unknown hop' : (opts.formatNodeId?.(id(v)) || '!' + id(v));
+        const response = !!p.request_id;
+        const route = Array.isArray(p.route) ? p.route : [];
+        const back = Array.isArray(p.route_back) ? p.route_back : [];
+        const rows = [];
+        const render = (label, nodes, snrs) => {
+            const parts = nodes.map((n, i) => {
+                const v = snrs[i - 1];
+                const snr = Number.isFinite(v) && v !== -128 ? (v / 4).toFixed(1) + ' dB' : '?';
+                return (i ? '<span style="color:var(--text-secondary,#999)"> → ' + this._esc(snr) + ' → </span>' : '') +
+                    '<span class="nc-chip">' + this._esc(fmt(n)) + '</span>';
+            });
+            rows.push({html: '<div class="pdm-row" style="display:block"><div class="pdm-row__key">' + label + '</div><div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0">' + parts.join('') + '</div></div>'});
+        };
+        if (response) {
+            render('Forward', [packet.destination_id, ...route, packet.source_id], p.snr_towards || []);
+            const snrs = [...(p.snr_back || [])];
+            if (opts.localNodeId && id(opts.localNodeId) === id(packet.destination_id) && !packet.via_mqtt && packet.capture_source === 'concentrator' && snrs.length === back.length) {
+                const snr = packet.signal?.snr ?? packet.snr;
+                if (Number.isFinite(snr)) snrs.push(snr * 4);
+            }
+            render('Return (reported)', [packet.source_id, ...back, packet.destination_id], snrs);
+        } else {
+            render('Request (observed so far)', [packet.source_id, ...route], p.snr_towards || []);
+            rows.push({key:'Target', val:fmt(packet.destination_id)});
+        }
+        if (opts.elapsedMs != null) rows.push({key:'Elapsed',val:(opts.elapsedMs / 1000).toFixed(1) + ' s (includes polling)'});
+        return rows;
     }
 
     _rfRows(packet) {

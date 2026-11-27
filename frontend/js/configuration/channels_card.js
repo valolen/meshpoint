@@ -100,7 +100,7 @@ class ChannelsConfigCard {
         const max = m.max_position_precision === 15 ? 15 : 32;
         const bits = Math.max(0, Math.min(max, Number(m.position_precision) || 0));
         return `<td><input type="checkbox" aria-label="MQTT uplink" data-policy="uplink_enabled" ${m.uplink_enabled ? 'checked' : ''}></td>
-            <td><input type="checkbox" aria-label="MQTT downlink (not implemented)" title="Downlink pending" data-policy="downlink_enabled" ${m.downlink_enabled ? 'checked' : ''} disabled></td>
+            <td><input type="checkbox" aria-label="MQTT downlink" title="Experimental encrypted broadcast downlink; restart required" data-policy="downlink_enabled" ${m.downlink_enabled ? 'checked' : ''}></td>
             <td><input class="ch-table__name-input" style="width:64px" aria-label="Own position precision" type="number" min="0" max="${max}" step="1" required value="${bits}" data-policy="position_precision"></td>`;
     }
 

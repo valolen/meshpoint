@@ -101,6 +101,7 @@ class MqttPublisher:
         self._topic_prefix = self._resolve_topic_prefix()
         self._downlink_loop = None
         self._downlink_tx = None
+        self._downlink_local = None
         self._downlink_primary = None
         self._downlink_seen = OrderedDict()
         self._downlink_pending = 0
@@ -516,10 +517,11 @@ class MqttPublisher:
 
         return messages
 
-    def configure_downlink(self, tx_service, primary_name: str, primary_key: str) -> None:
+    def configure_downlink(self, tx_service, primary_name: str, primary_key: str, local_receive=None) -> None:
         """Bind native TX on the asyncio thread, before accepting MQTT input."""
         self._downlink_loop = asyncio.get_running_loop()
         self._downlink_tx = tx_service
+        self._downlink_local = local_receive
         self._downlink_primary = (primary_name, primary_key)
         if self._connected and self._client:
             self._subscribe_downlink(self._client)
@@ -595,7 +597,7 @@ class MqttPublisher:
             elif (name not in self._channel_keys or key == _DEFAULT_PSK
                   or data.portnum not in (5, 70)):
                 return
-            flags = pkt.hop_limit | (pkt.hop_start << 5) | (0x08 if pkt.want_ack else 0)
+            flags = pkt.hop_limit | (pkt.hop_start << 5) | (0x08 if pkt.want_ack else 0) | 0x10
             raw = struct.pack("<IIIBBBB", pkt.to, source, pkt.id, flags,
                               channel_hash, 0, 0) + pkt.encrypted
             if not 16 < len(raw) <= 255 or self._downlink_pending >= 4:
@@ -610,9 +612,22 @@ class MqttPublisher:
                 return
             self._downlink_seen[identity] = now
             self._downlink_pending += 1
-            asyncio.create_task(self._transmit_downlink(raw, name, pkt.id))
+            if f"{pkt.to:08x}" == self._node_id:
+                asyncio.create_task(self._deliver_local_downlink(raw, name, pkt.id, data))
+            else:
+                asyncio.create_task(self._transmit_downlink(raw, name, pkt.id))
         except (ValueError, TypeError, AttributeError, DecodeError):
             logger.debug("MQTT downlink rejected malformed envelope")
+
+    async def _deliver_local_downlink(self, raw, name, packet_id, data):
+        try:
+            if self._downlink_local is not None:
+                await self._downlink_local(raw, name, data)
+                logger.info("MQTT downlink LOCAL OK channel=%s id=%08x", name, packet_id)
+        except Exception:
+            logger.exception("MQTT local delivery failed")
+        finally:
+            self._downlink_pending -= 1
 
     async def _transmit_downlink(self, raw: bytes, name: str, packet_id: int) -> None:
         try:

@@ -285,6 +285,7 @@ class MeshtasticPacketBuilder:
         latitude: float,
         longitude: float,
         altitude: float | None = None,
+        precision_bits: int | None = None,
         channel_key: bytes | None = None,
         channel_hash: int = 0x08,
         hop_limit: int = 3,
@@ -295,9 +296,32 @@ class MeshtasticPacketBuilder:
             from meshtastic.protobuf import mesh_pb2
 
             pos = mesh_pb2.Position()
-            pos.latitude_i = int(latitude * 1e7)
-            pos.longitude_i = int(longitude * 1e7)
-            if altitude is not None:
+            if precision_bits is not None:
+                if not 1 <= int(precision_bits) <= 32:
+                    logger.error("Position precision_bits must be 1..32")
+                    return None
+                bits = int(precision_bits)
+                if bits < 32:
+                    step = 1 << (32 - bits)
+
+                    def quantize(coord: float, limit: float) -> int:
+                        integer = round(coord * 1e7)
+                        center = (integer // step) * step + step // 2
+                        bound = int(limit * 1e7)
+                        return max(-bound, min(bound, center))
+
+                    pos.latitude_i = quantize(latitude, 90.0)
+                    pos.longitude_i = quantize(longitude, 180.0)
+                else:
+                    pos.latitude_i = int(latitude * 1e7)
+                    pos.longitude_i = int(longitude * 1e7)
+                pos.precision_bits = bits
+            else:
+                pos.latitude_i = int(latitude * 1e7)
+                pos.longitude_i = int(longitude * 1e7)
+            # Approximate positions intentionally omit altitude: otherwise
+            # altitude can defeat the requested location privacy.
+            if altitude is not None and (precision_bits is None or int(precision_bits) == 32):
                 pos.altitude = int(altitude)
             payload = pos.SerializeToString()
         except Exception:

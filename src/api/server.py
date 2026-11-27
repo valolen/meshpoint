@@ -200,6 +200,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         tx_service = _build_tx_service(config, pipeline)
         if tx_service is not None and pipeline.mqtt_publisher is not None:
             pipeline.mqtt_publisher.set_local_node_id(tx_service.source_node_id)
+            tx_service.set_mqtt_trace_publisher(pipeline.mqtt_publisher.publish_own_private_trace)
 
         mc_source = _find_meshcore_source(pipeline)
         meshcore_tx_ref = None

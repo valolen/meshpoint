@@ -242,9 +242,49 @@ class NodeCards {
         document.body.appendChild(dialog);
         dialog.showModal();
         const norm = v => String(v || '').replace(/^!/, '').toLowerCase();
-        const started = Date.now();
         try {
-            const tx = await fetch('/api/messages/traceroute/' + encodeURIComponent(destination), {method:'POST'});
+            status.textContent = 'Traceroute to ' + destination;
+            const channelLabel = document.createElement('label');
+            channelLabel.textContent = 'Channel ';
+            const channel = document.createElement('select');
+            channelLabel.append(channel);
+            const hopLabel = document.createElement('label');
+            hopLabel.textContent = 'Hop limit ';
+            const hops = document.createElement('select');
+            for (let i = 0; i <= 7; i++) hops.add(new Option(String(i), String(i)));
+            hops.value = '4';
+            hopLabel.append(hops);
+            const send = document.createElement('button');
+            send.textContent = 'Start traceroute';
+            send.disabled = true;
+            const controls = document.createElement('div');
+            controls.style.cssText = 'display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:12px 0';
+            controls.append(channelLabel, hopLabel, send);
+            dialog.insertBefore(controls, close);
+            const selection = new Promise(resolve => {
+                dialog.addEventListener('close', () => resolve(false), {once:true});
+                send.onclick = () => resolve(true);
+            });
+            const [chResponse, cfgResponse] = await Promise.all([
+                fetch('/api/messages/channels'), fetch('/api/config')
+            ]);
+            if (!chResponse.ok) throw new Error('Channel lookup failed');
+            const available = (await chResponse.json()).filter(c => c.protocol === 'meshtastic');
+            for (const c of available) channel.add(new Option(c.channel + ' · ' + c.name, String(c.channel)));
+            if (cfgResponse.ok) {
+                const config = await cfgResponse.json();
+                const limit = config.transmit?.hop_limit;
+                if (Number.isInteger(limit) && limit >= 0 && limit <= 7) hops.value = String(limit);
+            }
+            if (!available.length) throw new Error('No Meshtastic channels available');
+            if (!dialog.open) return;
+            send.disabled = false;
+            if (!(await selection) || !dialog.open) return;
+            const params = new URLSearchParams({channel:channel.value, hop_limit:hops.value});
+            controls.remove();
+            status.textContent = 'Sending traceroute to ' + destination + '…';
+            const started = Date.now();
+            const tx = await fetch('/api/messages/traceroute/' + encodeURIComponent(destination) + '?' + params, {method:'POST'});
             const result = await tx.json();
             if (!tx.ok || !result.success) throw new Error(result.error || result.detail || 'TX failed');
             const requestId = parseInt(result.packet_id, 16);

@@ -15,6 +15,7 @@ class AdvancedConfigCard {
         this._root = root;
         this._root.innerHTML = `
             <div class="cfg-section" data-adv-root>
+                <article class="cfg-card"><header class="cfg-card__head"><h3 class="cfg-card__title">MeshRadar · Public channels</h3><p class="cfg-card__hint">Only standard public-key broadcasts may be uploaded. Private channels and direct packets are always blocked. Uncheck all to stop packet uploads. Restart required.</p></header><form class="cfg-form" data-radar-form><div data-radar-channels></div><div class="cfg-card__actions"><button class="terminal-button terminal-button--primary" type="submit" disabled>Save Radar channels</button></div><p class="cfg-status" data-radar-status aria-live="polite"></p></form></article>
                 <article class="cfg-card">
                     <header class="cfg-card__head">
                         <h3 class="cfg-card__title">Map tiles</h3>
@@ -87,6 +88,7 @@ class AdvancedConfigCard {
                 </article>
             </div>
         `;
+        this._root.querySelector('[data-radar-form]').addEventListener('submit', e => this._saveRadar(e));
         this._storageForm = this._root.querySelector('[data-storage-form]');
         this._root.querySelector('[data-map-form]').addEventListener('submit', (e) => this._saveMap(e));
         this._radioAdvForm = this._root.querySelector('[data-radio-adv-form]');
@@ -103,6 +105,20 @@ class AdvancedConfigCard {
             radioArticle.style.display = isNode ? 'none' : '';
         }
 
+        const radar = config.upstream || {};
+        const host = this._root.querySelector('[data-radar-channels]');
+        host.replaceChildren();
+        for (const name of radar.available_channels || []) {
+            const label = document.createElement('label');
+            label.style.display = 'block';
+            const check = document.createElement('input');
+            check.type = 'checkbox';
+            check.value = name;
+            check.checked = (radar.publish_channels || []).includes(name);
+            label.append(check, document.createTextNode(' ' + name));
+            host.append(label);
+        }
+        this._root.querySelector('[data-radar-form] button').disabled = !Array.isArray(radar.available_channels);
         const storage = config.storage || {};
         const radioAdv = config.radio_advanced || {};
         this._setVal('[data-map-url]', config.dashboard?.map_tile_url || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png');
@@ -117,6 +133,15 @@ class AdvancedConfigCard {
     _setVal(sel, v) {
         const el = this._root.querySelector(sel);
         if (el && v != null) el.value = v;
+    }
+
+    async _saveRadar(event) {
+        event.preventDefault();
+        const status = this._root.querySelector('[data-radar-status]');
+        const channels = Array.from(this._root.querySelectorAll('[data-radar-channels] input:checked'), el => el.value);
+        status.textContent = 'Saving…';
+        const result = await this._api.put('/api/config/upstream/channels', {publish_channels: channels});
+        this._finish(status, result, 'Radar channels saved.');
     }
 
     async _saveStorage(event) {

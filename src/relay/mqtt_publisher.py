@@ -98,6 +98,12 @@ class MqttPublisher:
         self._ha_discovery: Optional[HomeAssistantDiscovery] = None
         self._topic_prefix = self._resolve_topic_prefix()
 
+    def set_local_node_id(self, node_id: int) -> None:
+        """Bind MQTT-originated packets to the TxService's resolved identity."""
+        if not 0 < int(node_id) < 0xFFFFFFFF:
+            raise ValueError("local node_id must be a non-reserved 32-bit value")
+        self._node_id = f"{int(node_id) & 0xFFFFFFFF:08x}"
+
     @property
     def gateway_id(self) -> str:
         return self._gateway_id

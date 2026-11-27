@@ -31,8 +31,8 @@ class PacketRepository:
                 packet_type, hop_limit, hop_start, channel_hash,
                 want_ack, via_mqtt, relay_node, decoded_payload, decrypted,
                 rssi, snr, frequency_mhz, spreading_factor,
-                bandwidth_khz, capture_source, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                bandwidth_khz, coding_rate, capture_source, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 packet.packet_id, packet.source_id,
@@ -46,6 +46,7 @@ class PacketRepository:
                 packet.signal.frequency_mhz if packet.signal else None,
                 packet.signal.spreading_factor if packet.signal else None,
                 packet.signal.bandwidth_khz if packet.signal else None,
+                packet.signal.coding_rate if packet.signal else None,
                 packet.capture_source, packet.timestamp.isoformat(),
             ),
         )
@@ -203,6 +204,7 @@ class PacketRepository:
                 frequency_mhz=row.get("frequency_mhz", 906.875),
                 spreading_factor=row.get("spreading_factor", 11),
                 bandwidth_khz=row.get("bandwidth_khz", 250.0),
+                coding_rate=row.get("coding_rate") or "Unknown",
             )
 
         decoded = None

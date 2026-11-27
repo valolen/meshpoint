@@ -97,6 +97,19 @@ class TestMeshPositionResolver(unittest.TestCase):
         )
         self.assertEqual(resolver.resolve(), (40.8, -73.9, 15.0))
 
+    def test_raw_resolution_bypasses_public_mesh_privacy(self) -> None:
+        resolver = self._resolver(
+            mesh_source="static",
+            mesh_precision="none",
+            device_lat=54.7006009,
+            device_lon=25.1565773,
+        )
+        self.assertIsNone(resolver.resolve())
+        self.assertEqual(
+            resolver.resolve_raw(),
+            (54.7006009, 25.1565773, 25.0),
+        )
+
     def test_live_mesh_none_skips_broadcast(self) -> None:
         resolver = self._resolver(
             mesh_source="live",

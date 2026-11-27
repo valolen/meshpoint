@@ -836,6 +836,8 @@ def _build_position_broadcaster(
         interval_minutes=pos_cfg.interval_minutes,
         startup_delay_seconds=pos_cfg.startup_delay_seconds,
         coords_provider=resolver.resolve,
+        raw_coords_provider=resolver.resolve_raw,
+        mqtt_publisher=None if pimesh else coord.mqtt_publisher,
     )
 
 

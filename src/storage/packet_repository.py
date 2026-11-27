@@ -130,6 +130,33 @@ class PacketRepository:
         )
         return [self._row_to_packet(r) for r in rows]
 
+    async def get_traceroutes_for_node(self, node_id: str, limit: int = 10, offset: int = 0) -> list[Packet]:
+        rows = await self._db.fetch_all(
+            """
+            WITH matched AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY source_id, destination_id, packet_id
+                    ORDER BY timestamp DESC, id DESC
+                ) AS rn
+                FROM packets
+                WHERE protocol = 'meshtastic' AND packet_type = 'traceroute'
+                  AND decrypted = 1 AND (
+                    source_id = ? OR destination_id = ?
+                    OR EXISTS (SELECT 1 FROM json_each(
+                        CASE WHEN json_valid(decoded_payload) THEN decoded_payload ELSE '{}' END, '$.route'
+                    ) WHERE value = ?)
+                    OR EXISTS (SELECT 1 FROM json_each(
+                        CASE WHEN json_valid(decoded_payload) THEN decoded_payload ELSE '{}' END, '$.route_back'
+                    ) WHERE value = ?)
+                  )
+            )
+            SELECT * FROM matched WHERE rn = 1
+            ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?
+            """,
+            (node_id, node_id, node_id, node_id, limit, offset),
+        )
+        return [self._row_to_packet(r) for r in rows]
+
     async def get_count(self) -> int:
         row = await self._db.fetch_one("SELECT COUNT(*) as cnt FROM packets")
         return row["cnt"] if row else 0

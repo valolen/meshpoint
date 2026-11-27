@@ -200,14 +200,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         tx_service = _build_tx_service(config, pipeline)
         if tx_service is not None and pipeline.mqtt_publisher is not None:
             pipeline.mqtt_publisher.set_local_node_id(tx_service.source_node_id)
-            if tx_service.meshtastic_enabled and tx_service._wrapper is not None:
-                from src.transmit.tx_service import PRESET_DISPLAY_NAMES
-                primary_name = config.meshtastic.primary_channel_name or PRESET_DISPLAY_NAMES.get(
-                    (config.radio.spreading_factor, int(config.radio.bandwidth_khz)), "LongFast"
-                )
-                pipeline.mqtt_publisher.configure_downlink(
-                    tx_service, primary_name, config.meshtastic.default_key_b64
-                )
+
         mc_source = _find_meshcore_source(pipeline)
         meshcore_tx_ref = None
         if tx_service and hasattr(tx_service, '_meshcore_tx'):
@@ -228,6 +221,16 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             pipeline, message_repo, config, meshcore_tx_ref, tx_service
         )
         _setup_inbound_responder(pipeline, tx_service, config)
+        if tx_service is not None and pipeline.mqtt_publisher is not None:
+            if tx_service.meshtastic_enabled and tx_service._wrapper is not None:
+                from src.transmit.tx_service import PRESET_DISPLAY_NAMES
+                primary_name = config.meshtastic.primary_channel_name or PRESET_DISPLAY_NAMES.get(
+                    (config.radio.spreading_factor, int(config.radio.bandwidth_khz)), "LongFast"
+                )
+                pipeline.mqtt_publisher.configure_downlink(
+                    tx_service, primary_name, config.meshtastic.default_key_b64,
+                    local_receive=pipeline.receive_mqtt_local
+                )
         setup_meshcore_contact_enrichment(pipeline, meshcore_tx_ref)
         if meshcore_tx_ref and meshcore_tx_ref.connected:
             import asyncio

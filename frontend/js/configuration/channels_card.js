@@ -42,6 +42,7 @@ class ChannelsConfigCard {
                             <col class="ch-table__col-psk" />
                             <col class="ch-table__col-hash" />
                             <col class="ch-table__col-state" />
+                            <col style="width:76px" /><col style="width:86px" /><col style="width:100px" />
                         </colgroup>
                         <thead>
                             <tr>
@@ -49,7 +50,7 @@ class ChannelsConfigCard {
                                 <th>Name</th>
                                 <th>PSK (base64)</th>
                                 <th>Hash</th>
-                                <th>State</th>
+                                <th>State</th><th>Uplink</th><th>Downlink</th><th title="Own position precision in bits; 0 disables">Precision</th>
                             </tr>
                         </thead>
                         <tbody data-ch-body></tbody>
@@ -68,15 +69,10 @@ class ChannelsConfigCard {
                         Save Channels
                     </button>
                 </div>
+                <div class="cfg-card__actions"><button type="button" class="terminal-button" data-mqtt-channel-save>Save MQTT settings</button></div>
                 <p class="cfg-status" data-ch-status aria-live="polite"></p>
             </article>
-            <article class="cfg-card" data-mqtt-channel-card>
-                <header class="cfg-card__head"><h3 class="cfg-card__title">Channel MQTT settings</h3>
-                <p class="cfg-card__hint">Per-channel MQTT policy. Own POSITION uses the regular position schedule; 0 bits disables sharing on that channel. Downlink is still pending.</p></header>
-                <div data-mqtt-channel-rows></div>
-                <div class="cfg-card__actions"><button type="button" class="terminal-button terminal-button--primary" data-mqtt-channel-save>Save MQTT settings</button></div>
-                <p class="cfg-status" data-mqtt-channel-status></p>
-            </article>
+
         `;
         this._tbody = this._root.querySelector('[data-ch-body]');
         this._statusEl = this._root.querySelector('[data-ch-status]');
@@ -94,63 +90,37 @@ class ChannelsConfigCard {
         const channels = (config && config.channels) || [];
         this._channels = channels;
         this._renderRows();
-        this._renderMqttPolicy();
+        this._root.querySelector("[data-mqtt-channel-save]").hidden = !!this._nativeRadio;
         if (config?.channels_error) this._setStatus('error', config.channels_error);
     }
 
-    _renderMqttPolicy() {
-        const card = this._root.querySelector('[data-mqtt-channel-card]');
-        card.hidden = !!this._nativeRadio;
-        const host = card.querySelector('[data-mqtt-channel-rows]');
-        host.replaceChildren();
-        for (const ch of this._channels) {
-            if (!ch.mqtt) continue;
-            const row = document.createElement('fieldset');
-            row.dataset.channel = ch.name;
-            row.style.marginBottom = '12px';
-            const legend = document.createElement('legend');
-            legend.textContent = ch.name;
-            row.append(legend);
-            for (const [field, title] of [['uplink_enabled', 'Uplink'], ['downlink_enabled', 'Downlink']]) {
-                const label = document.createElement('label');
-                label.style.marginRight = '16px';
-                const input = document.createElement('input');
-                input.type = 'checkbox';
-                input.dataset.policy = field;
-                input.checked = !!ch.mqtt[field];
-                label.append(input, document.createTextNode(' ' + title));
-                row.append(label);
-            }
-            const label = document.createElement('label');
-            label.textContent = ' Own position precision (bits): ';
-            const bits = document.createElement('input');
-            bits.type = 'number';
-            bits.min = '0';
-            bits.max = ch.mqtt.max_position_precision === 15 ? '15' : '32';
-            bits.required = true;
-            bits.step = '1';
-            bits.value = Math.min(Number(bits.max), ch.mqtt.position_precision);
-            bits.dataset.policy = 'position_precision';
-            label.append(bits);
-            row.append(label);
-            host.append(row);
-        }
+    _mqttCells(ch) {
+        if (this._nativeRadio || !ch.mqtt) return '<td>—</td><td>—</td><td>—</td>';
+        const m = ch.mqtt;
+        const max = m.max_position_precision === 15 ? 15 : 32;
+        const bits = Math.max(0, Math.min(max, Number(m.position_precision) || 0));
+        return `<td><input type="checkbox" aria-label="MQTT uplink" data-policy="uplink_enabled" ${m.uplink_enabled ? 'checked' : ''}></td>
+            <td><input type="checkbox" aria-label="MQTT downlink (not implemented)" title="Downlink pending" data-policy="downlink_enabled" ${m.downlink_enabled ? 'checked' : ''} disabled></td>
+            <td><input class="ch-table__name-input" style="width:64px" aria-label="Own position precision" type="number" min="0" max="${max}" step="1" required value="${bits}" data-policy="position_precision"></td>`;
     }
 
     async _saveMqttPolicy() {
+        if (this._tbody.querySelectorAll("tr[data-index]").length !== this._channels.length) { this._setStatus("error", "Save channel changes first."); return; }
         const settings = Object.create(null);
-        for (const row of this._root.querySelectorAll('[data-mqtt-channel-rows] fieldset')) {
+        for (const row of this._tbody.querySelectorAll('tr[data-index]')) {
             const bits = row.querySelector('[data-policy="position_precision"]');
+            if (!bits) continue;
             if (!bits.reportValidity()) return;
-            settings[row.dataset.channel] = {
+            const original = this._channels[Number(row.dataset.index)];
+            if (!original || original.name !== row.querySelector('[data-field="name"]').value.trim()) { this._setStatus("error", "Save channel changes first."); return; }
+            settings[original.name] = {
                 uplink_enabled: row.querySelector('[data-policy="uplink_enabled"]').checked,
                 downlink_enabled: row.querySelector('[data-policy="downlink_enabled"]').checked,
                 position_precision: Number(bits.value),
             };
         }
-        const status = this._root.querySelector('[data-mqtt-channel-status]');
         const res = await this._api.put('/api/config/channels/mqtt', settings);
-        status.textContent = res ? 'Saved. Restart required.' : 'Save failed.';
+        this._setStatus(res ? 'success' : 'error', res ? 'MQTT settings saved. Restart required.' : 'Save failed.');
         if (res) { this._api.signalRestart('Channel MQTT settings saved.'); await this._api.refresh(); }
     }
 
@@ -211,6 +181,7 @@ class ChannelsConfigCard {
                 ${pskCell}
                 <td class="ch-table__hash">${hash}</td>
                 ${enabledCell}
+                ${this._mqttCells(ch)}
             </tr>
         `;
     }
@@ -218,7 +189,7 @@ class ChannelsConfigCard {
     _emptyRow() {
         return `
             <tr class="ch-table__row ch-table__row--empty">
-                <td colspan="5">No channels configured.</td>
+                <td colspan="8">No channels configured.</td>
             </tr>
         `;
     }
@@ -314,6 +285,7 @@ class ChannelsConfigCard {
                 </label>
             </td>
         `;
+        tr.insertAdjacentHTML("beforeend", "<td>—</td><td>—</td><td>—</td>");
         this._wireRowHandlers(tr);
         this._tbody.appendChild(tr);
         this._updateAddBtn();

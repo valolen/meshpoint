@@ -64,7 +64,18 @@ class NodeMap {
         });
         this._map.addLayer(this._markerGroup);
 
-        const overlays = { 'Topology Links': this._topologyLayer };
+        this._nodeNames = L.layerGroup().addTo(this._map);
+        this._deviceNames = L.layerGroup().addTo(this._map);
+        const overlays = { 'Topology': this._topologyLayer, 'Meshpoint Names': this._deviceNames, 'Node Names': this._nodeNames };
+        const legend = L.control({position:'bottomleft'});
+        legend.onAdd = () => {
+            const el = L.DomUtil.create('div');
+            el.style.cssText = 'background:#172231;color:#aabbd0;border:1px solid #35465d;border-radius:6px;padding:8px 10px;font-size:11px;line-height:1.6';
+            el.innerHTML = '<strong>LEGEND</strong><br><span style="color:#00e5a0">●</span> Meshpoint<br><span style="color:#38bdf8">●</span> Meshtastic<br><span style="color:#a78bfa">◆</span> MeshCore<br><span style="color:#778395">●</span> Not heard in 2h<br>↔ Router / repeater<br>⌖ Tracker · ◇ Sensor<br>● Client / other';
+            L.DomEvent.disableClickPropagation(el);
+            return el;
+        };
+        legend.addTo(this._map);
         L.control.layers(null, overlays, { position: 'topright', collapsed: true }).addTo(this._map);
 
         this._map.on('overlayadd', (e) => {
@@ -162,12 +173,15 @@ class NodeMap {
         }
 
         this._markerGroup.clearLayers();
+        this._nodeNames.clearLayers();
+        this._deviceNames.clearLayers();
         this._markers = {};
 
         const bounds = [];
 
         if (device && device.latitude && device.longitude) {
             this._addDeviceMarker(device);
+            this._addMapName(this._deviceNames, [device.latitude, device.longitude], device.device_name || 'Meshpoint', '#00e5a0');
             bounds.push([device.latitude, device.longitude]);
         }
 
@@ -228,6 +242,15 @@ class NodeMap {
         this._deviceMarker.addTo(this._map);
     }
 
+    _addMapName(layer, position, name, color) {
+        const label = L.marker(position, {
+            interactive:false, keyboard:false,
+            icon:L.divIcon({className:'',iconSize:[0,0],iconAnchor:[-12,9],
+                html:'<span style="display:inline-block;white-space:nowrap;background:#111b2b;border:1px solid #30445b;border-radius:3px;padding:2px 5px;font:11px monospace;color:'+color+'">'+this._esc(name)+'</span>'})
+        });
+        layer.addLayer(label);
+    }
+
     _addNodeMarker(n) {
         const isMeshtastic = (n.protocol || 'meshtastic') === 'meshtastic';
         const heard = n.last_heard || n.last_seen;
@@ -237,9 +260,11 @@ class NodeMap {
         let extra = '';
         if (isRecent) extra += ' node-marker-wrap--recent';
         if (isFav) extra += ' node-marker-wrap--fav';
-        const html = window.ModemPresetLabel
-            ? ModemPresetLabel.markerMarkup(preset, isMeshtastic, extra)
-            : `<div class="node-marker-wrap${extra}"><div class="${isMeshtastic ? 'node-marker__dot' : 'node-marker__diamond'}"></div></div>`;
+        const active = heard && Date.now() - new Date(heard).getTime() < 7200000;
+        const color = !active ? '#778395' : isMeshtastic ? '#38bdf8' : '#a78bfa';
+        const role = Number(n.role);
+        const glyph = !isMeshtastic ? '◆' : [2,3,4,11].includes(role) ? '↔' : role === 5 ? '⌖' : role === 6 ? '◇' : '●';
+        const html = '<div class="node-marker-wrap'+extra+'" style="color:'+color+';font-size:15px;line-height:16px;text-shadow:0 0 3px #000">'+glyph+'</div>';
         const marker = L.marker([n.latitude, n.longitude], {
             icon: L.divIcon({
                 html,
@@ -266,6 +291,7 @@ class NodeMap {
 
         this._markerGroup.addLayer(marker);
         this._markers[n.node_id] = marker;
+        this._addMapName(this._nodeNames, [n.latitude,n.longitude], name, color);
     }
 
     _formatRelativeTime(timestamp) {

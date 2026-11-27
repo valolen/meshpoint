@@ -52,7 +52,7 @@ class UpstreamClient:
     ):
         self._config = config
         self._identity = identity
-        self._stats_reporter = None  # Mixed-channel statistics must not leave the device.
+        self._stats_reporter = StatsReporter()  # Independent public-only accumulator.
         self._packet_allowed = packet_allowed
         self._connection: Optional[websockets.WebSocketClientProtocol] = None
         self._buffer: deque[dict] = deque(maxlen=config.buffer_max_size)
@@ -113,6 +113,12 @@ class UpstreamClient:
             return
         if self._packet_allowed is None or not self._packet_allowed(packet):
             return
+        signal = packet.signal.to_dict() if packet.signal else {}
+        self._stats_reporter.record_packet(
+            packet.protocol.value, packet.packet_type.value,
+            signal.get("rssi"), signal.get("snr"),
+            packet.hop_start, packet.hop_limit,
+        )
         if not self._rate_limiter.allow():
             self._dropped_count += 1
             if self._dropped_count % 50 == 1:
@@ -216,6 +222,8 @@ class UpstreamClient:
             await asyncio.sleep(self.HEARTBEAT_INTERVAL_SECONDS)
             try:
                 heartbeat = self._build_heartbeat()
+                # Swap before awaiting so new observations are not erased.
+                self._stats_reporter = StatsReporter()
                 await self._send(heartbeat)
                 if self._stats_reporter:
                     stats = heartbeat.get("stats", {})
@@ -226,7 +234,6 @@ class UpstreamClient:
                         node_count,
                         stats.get("packets_per_minute", "--"),
                     )
-                    self._stats_reporter.reset()
                 else:
                     logger.info("Heartbeat sent")
             except ConnectionClosed:

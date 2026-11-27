@@ -80,6 +80,7 @@ class TxService:
     ):
         self._wrapper = wrapper
         self._native_tx_lock = asyncio.Lock()
+        self._mqtt_trace_publish = None
         self._native_send_tasks = set()
         self._crypto = crypto
         self._channel_plan = channel_plan
@@ -471,6 +472,9 @@ class TxService:
 
         return await self._send_built_packet(packet_bytes, packet_id, label="routing ACK")
 
+    def set_mqtt_trace_publisher(self, callback) -> None:
+        self._mqtt_trace_publish = callback
+
     async def send_traceroute(
         self, destination: str | int, channel: int = 0, hop_limit: int | None = None
     ) -> SendResult:
@@ -502,9 +506,15 @@ class TxService:
         )
         if packet_bytes is None:
             return SendResult(success=False, protocol="meshtastic", error="Traceroute build failed")
-        return await self._send_built_packet(
+        result = await self._send_built_packet(
             packet_bytes, packet_id, label="traceroute request"
         )
+        if self._mqtt_trace_publish is not None:
+            published = self._mqtt_trace_publish(packet_bytes, channel)
+            if published and not result.success:
+                return SendResult(success=True, protocol="meshtastic",
+                                  packet_id=f"{packet_id:08x}", timestamp=time.time())
+        return result
 
     async def send_traceroute_reply(self, original) -> SendResult:
         """Reply to a traceroute probe addressed to this node."""

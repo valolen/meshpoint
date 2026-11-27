@@ -229,9 +229,35 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 loop, pipeline, meshcore_tx_ref, mc_source
             )
 
+        # Only native RF broadcasts decoded with the standard public PSK.
+        from src.relay.channel_resolver import _DEFAULT_PSK, _expand_key, _xor_hash
+        import base64
+
+        def radar_packet_allowed(packet):
+            try:
+                if (packet.protocol.value != "meshtastic"
+                        or packet.capture_source != "concentrator"
+                        or packet.destination_id.lower() != "ffffffff"
+                        or not packet.decrypted
+                        or packet.packet_type.value in ("encrypted", "unknown", "admin")
+                        or packet.matched_channel_index is None
+                        or not packet.raw_radio_packet):
+                    return False
+                keys = pipeline._crypto.get_all_keys()
+                if keys[packet.matched_channel_index] != _DEFAULT_PSK:
+                    return False
+                if packet.channel_hash != _xor_hash("LongFast", _DEFAULT_PSK):
+                    return False
+                for name, encoded in config.meshtastic.channel_keys.items():
+                    if _xor_hash(name, _expand_key(base64.b64decode(encoded))) == packet.channel_hash:
+                        return False
+                return True
+            except (ValueError, TypeError, IndexError, AttributeError):
+                return False
+
         upstream = UpstreamClient(
             config.upstream, identity,
-            stats_reporter=pipeline.stats_reporter,
+            packet_allowed=radar_packet_allowed,
         )
         pipeline.on_packet(upstream.send_packet)
         await upstream.start()

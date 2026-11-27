@@ -182,6 +182,7 @@ class DashboardConfig:
 
 @dataclass
 class UpstreamConfig:
+    publish_channels: list[str] = field(default_factory=lambda: ["LongFast"])
     enabled: bool = False
     url: str = "wss://api.meshradar.io"
     reconnect_interval_seconds: int = 10

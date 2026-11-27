@@ -809,6 +809,18 @@ class TxService:
             error=self._native_send_error(result_code),
         )
 
+    async def send_mqtt_downlink(self, raw: bytes) -> SendResult:
+        """Transmit a validated MQTT frame without changing its ciphertext."""
+        if not self.meshtastic_enabled or self._wrapper is None or not 16 < len(raw) <= 255:
+            return SendResult(success=False, protocol="meshtastic",
+                              error="Native TX unavailable or invalid frame")
+        frame = bytearray(raw)
+        frame[12] |= 0x10  # via_mqtt
+        frame[14] = 0  # no RF next-hop route inherited from remote gateway
+        frame[15] = self.source_node_id & 0xFF
+        packet_id = int.from_bytes(frame[8:12], "little")
+        return await self._send_built_packet(bytes(frame), packet_id, label="MQTT downlink")
+
     async def send_raw_relay(
         self, raw_radio_bytes: bytes
     ) -> SendResult:

@@ -14,7 +14,7 @@ from src.analytics.stats_reporter import StatsReporter
 from src.config import UpstreamConfig
 from src.log_format import CYAN, DIM, GREEN, RED, RESET, YELLOW
 from src.models.device_identity import DeviceIdentity
-from src.models.packet import Packet
+from src.models.packet import Packet, Protocol, PacketType
 from src.relay.rate_limiter import RateLimiter
 from src.remote.command_handler import CommandHandler
 from src.remote.executors import (
@@ -48,10 +48,12 @@ class UpstreamClient:
         config: UpstreamConfig,
         identity: DeviceIdentity,
         stats_reporter: Optional[StatsReporter] = None,
+        packet_allowed=None,
     ):
         self._config = config
         self._identity = identity
-        self._stats_reporter = stats_reporter
+        self._stats_reporter = None  # Mixed-channel statistics must not leave the device.
+        self._packet_allowed = packet_allowed
         self._connection: Optional[websockets.WebSocketClientProtocol] = None
         self._buffer: deque[dict] = deque(maxlen=config.buffer_max_size)
         self._running = False
@@ -108,6 +110,8 @@ class UpstreamClient:
     def send_packet(self, packet: Packet) -> None:
         """Queue a packet for upstream delivery (rate-limited)."""
         if not self._config.enabled:
+            return
+        if self._packet_allowed is None or not self._packet_allowed(packet):
             return
         if not self._rate_limiter.allow():
             self._dropped_count += 1
@@ -333,9 +337,7 @@ class UpstreamClient:
         handler.register("ping", execute_ping)
         handler.register("get_status", execute_get_status)
         handler.register("get_metrics", execute_get_metrics)
-        handler.register("get_logs", execute_get_logs)
         handler.register("restart_service", execute_restart_service)
-        handler.register("apply_update", execute_apply_update)
         return handler
 
     def _build_auth_headers(self) -> dict[str, str]:

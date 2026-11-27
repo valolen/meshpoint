@@ -7,6 +7,7 @@ class NodeDrawer {
         this._drawer = document.getElementById(drawerId);
         this._onSendMessage = options.onSendMessage || null;
         this._onTraceroute = options.onTraceroute || null;
+        this._traceOptions = options.traceOptions || (() => ({}));
         this._onViewOnMap = options.onViewOnMap || null;
         this._currentNode = null;
         this._sections = {};
@@ -114,6 +115,7 @@ class NodeDrawer {
         body.appendChild(this._buildMetricsChartSection(n));
         body.appendChild(this._buildInfoSection(n));
         body.appendChild(this._buildSignalSection(n));
+        if ((n.protocol || 'meshtastic') === 'meshtastic') body.appendChild(this._buildTracerouteHistory(n));
         body.appendChild(this._buildDeviceMetrics(n));
         body.appendChild(this._buildEnvironmentMetrics(n));
         body.appendChild(this._buildPositionSection(n));
@@ -151,6 +153,75 @@ class NodeDrawer {
             div.appendChild(traceBtn);
         }
         return div;
+    }
+
+    _buildTracerouteHistory(n) {
+        const section = document.createElement('div');
+        section.className = 'nd-section';
+        const header = document.createElement('div');
+        header.className = 'nd-section__header';
+        header.innerHTML = '<span class="nd-section__title">Traceroutes</span><span class="nd-section__arrow">▶</span>';
+        const content = document.createElement('div');
+        content.className = 'nd-section__content';
+        content.style.display = 'none';
+        const list = document.createElement('div');
+        const more = document.createElement('button');
+        more.className = 'nd-action-btn';
+        more.textContent = 'Show more';
+        more.hidden = true;
+        content.append(list, more);
+        let offset = 0, busy = false;
+        const norm = id => String(id || '').replace(/^!/, '').toLowerCase();
+        const load = async () => {
+            if (busy) return;
+            busy = true;
+            more.disabled = true;
+            const notice = document.createElement('div');
+            notice.textContent = 'Loading…';
+            list.appendChild(notice);
+            try {
+                const res = await fetch('/api/packets/traceroutes/' + encodeURIComponent(n.node_id) + '?limit=10&offset=' + offset);
+                if (!res.ok) throw new Error('History unavailable');
+                const packets = await res.json();
+                notice.remove();
+                const opts = this._traceOptions();
+                const name = id => opts.formatNodeId?.(id) || '!' + norm(id);
+                for (const p of packets) {
+                    const response = !!p.decoded_payload?.request_id;
+                    const from = response ? p.destination_id : p.source_id;
+                    const to = response ? p.source_id : p.destination_id;
+                    const role = norm(n.node_id) === norm(from) ? 'Origin' : norm(n.node_id) === norm(to) ? 'Target' : 'Transit';
+                    const button = document.createElement('button');
+                    button.className = 'nd-action-btn';
+                    button.style.cssText = 'display:block;width:100%;text-align:left;margin:4px 0;padding:7px;white-space:normal';
+                    const title = document.createElement('div');
+                    title.textContent = name(from) + ' → ' + name(to);
+                    const meta = document.createElement('small');
+                    meta.textContent = new Date(p.timestamp).toLocaleString() + ' · ' + role + ' · ' + (response ? 'Reply' : 'Request');
+                    button.append(title, meta);
+                    button.onclick = () => new PacketDetailModal().show(p, opts);
+                    list.appendChild(button);
+                }
+                offset += packets.length;
+                if (!offset) list.textContent = 'No traceroutes recorded';
+                more.hidden = packets.length < 10;
+            } catch (e) {
+                notice.textContent = e.message;
+                more.hidden = false;
+            } finally {
+                busy = false;
+                more.disabled = false;
+            }
+        };
+        header.onclick = () => {
+            const opening = content.style.display === 'none';
+            content.style.display = opening ? '' : 'none';
+            header.querySelector('.nd-section__arrow').textContent = opening ? '▼' : '▶';
+            if (opening && !offset && !busy) { list.textContent = ''; load(); }
+        };
+        more.onclick = load;
+        section.append(header, content);
+        return section;
     }
 
     _buildInfoSection(n) {

@@ -96,6 +96,55 @@ class TestPositionBroadcaster(unittest.IsolatedAsyncioTestCase):
         await b.stop()
         self.assertEqual(tx.calls, 0)
 
+    async def test_private_mqtt_position_uses_raw_coords_even_when_public_hidden(self):
+        class PrivateTx(_FakeTxService):
+            def __init__(self):
+                super().__init__()
+                self.built = []
+
+            def build_position_packet(
+                self, lat, lon, alt, *, channel=0, precision_bits=None
+            ):
+                self.built.append((lat, lon, alt, channel, precision_bits))
+                return b"raw-private-frame", 0x1234, 0x42
+
+        class PrivateMqtt:
+            def __init__(self):
+                self.calls = []
+
+            def private_position_targets(self):
+                return [(1, "Family", 24)]
+
+            def publish_own_private_position(
+                self, raw_packet, *, channel_name, precision_bits
+            ):
+                self.calls.append(
+                    (raw_packet, channel_name, precision_bits)
+                )
+                return True
+
+        tx = PrivateTx()
+        mqtt = PrivateMqtt()
+        b = PositionBroadcaster(
+            tx,
+            coords_provider=lambda: None,
+            raw_coords_provider=lambda: (54.7006, 25.1565, 210.0),
+            mqtt_publisher=mqtt,
+        )
+
+        await b._broadcast_once()
+
+        self.assertEqual(tx.calls, 0)
+        self.assertEqual(
+            tx.built,
+            [(54.7006, 25.1565, 210.0, 1, 24)],
+        )
+        self.assertEqual(
+            mqtt.calls,
+            [(b"raw-private-frame", "Family", 24)],
+        )
+        self.assertIsNotNone(b.last_sent_at)
+
     async def test_set_interval_zero_pauses(self):
         tx = _FakeTxService(results=[_ok(), _ok()])
         b = PositionBroadcaster(

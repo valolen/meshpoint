@@ -63,6 +63,8 @@ class MeshtasticDecoder:
             request_id = pre_decoded.get("request_id", 0)
             remote_channel_name = pre_decoded.get("channel_name")
             if decoded_payload is not None:
+                decoded_payload["ok_to_mqtt"] = bool(int(pre_decoded.get("bitfield", 0) or 0) & 1)
+            if decoded_payload is not None:
                 decrypted = True
 
         elif CryptoService.is_pki_packet(
@@ -249,6 +251,8 @@ class MeshtasticDecoder:
         if decoded_payload is None:
             return None
 
+        decoded_payload["ok_to_mqtt"] = bool(int(decoded.get("bitfield", 0) or 0) & 1)
+
         # Decrypted Phone API packets report a local slot, not an OTA hash.
         if 0 <= channel_hash < 8:
             decoded_payload["channel_index"] = channel_hash
@@ -369,6 +373,8 @@ class MeshtasticDecoder:
             request_id = int(data_msg.request_id) if data_msg.request_id else 0
 
             decoded, packet_type = dispatch_portnum(portnum, inner)
+            if decoded is not None:
+                decoded["ok_to_mqtt"] = bool(data_msg.bitfield & 1)
             return decoded, packet_type, bytes(inner) if inner else None, request_id
         except ImportError:
             return (

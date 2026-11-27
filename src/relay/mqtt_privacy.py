@@ -24,9 +24,10 @@ def is_broadcast(packet: Packet) -> bool:
     return False
 
 
-def prepare_packet(packet: Packet, precision: str) -> Packet:
+def prepare_packet(packet: Packet, precision: str | int) -> Packet:
     # Invalid policies fail closed. Never edit the shared storage/UI packet.
-    policy = precision if precision in {"exact", "approximate", "none"} else "none"
+    bits_cap = precision if type(precision) is int and 0 <= precision <= 32 else 15
+    policy = ("none" if bits_cap == 0 else "exact" if bits_cap == 32 else "approximate") if type(precision) is int else (precision if precision in {"exact", "approximate", "none"} else "none")
 
     def filtered(value):
         if isinstance(value, list):
@@ -48,8 +49,8 @@ def prepare_packet(packet: Packet, precision: str) -> Packet:
                 # Quantize to a Meshtastic coordinate grid, never claiming
                 # greater precision than the received position.
                 original_bits = value.get("precision_bits")
-                bits = min(15, original_bits) if type(original_bits) is int and 0 < original_bits <= 32 else 15
-                if type(original_bits) is int and 0 < original_bits <= 15:
+                bits = min(bits_cap, original_bits) if type(original_bits) is int and 0 < original_bits <= 32 else bits_cap
+                if type(original_bits) is int and 0 < original_bits <= bits_cap:
                     result.update(latitude=lat, longitude=lon,
                                   precision_bits=original_bits)
                     return result

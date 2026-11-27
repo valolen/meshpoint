@@ -27,9 +27,13 @@ class PositionBroadcaster:
         interval_minutes: int = 15,
         startup_delay_seconds: int = 180,
         coords_provider: Callable[[], tuple[float, float, float | None] | None],
+        raw_coords_provider: Callable[[], tuple[float, float, float | None] | None] | None = None,
+        mqtt_publisher=None,
     ):
         self._tx = tx_service
         self._coords_provider = coords_provider
+        self._raw_coords_provider = raw_coords_provider
+        self._mqtt_publisher = mqtt_publisher
         self._task: Optional[asyncio.Task] = None
         self._running = False
         interval_seconds = clamp_interval_minutes(
@@ -103,18 +107,79 @@ class PositionBroadcaster:
     async def _broadcast_once(self) -> None:
         # Hidden/unavailable coordinates must still advance the attempt schedule.
         self._schedule.mark_attempt()
+        sent_any = False
+
         coords = self._coords_provider()
-        if coords is None:
-            logger.debug("Position broadcast skipped: no coordinates")
-            return
-        lat, lon, alt = coords
-        result = await self._tx.send_position(lat, lon, alt)
-        if result.success:
-            self._schedule.mark_sent()
-            logger.info(
-                "Position broadcast OK: id=%s airtime=%dms",
-                result.packet_id,
-                result.airtime_ms,
-            )
+        if coords is not None:
+            lat, lon, alt = coords
+            result = await self._tx.send_position(lat, lon, alt)
+            if result.success:
+                sent_any = True
+                logger.info(
+                    "Position broadcast OK: id=%s airtime=%dms",
+                    result.packet_id,
+                    result.airtime_ms,
+                )
+            else:
+                logger.warning("Position broadcast skipped: %s", result.error)
         else:
-            logger.warning("Position broadcast skipped: %s", result.error)
+            logger.debug("Public position broadcast skipped: no coordinates")
+
+        private_count = self._publish_private_positions()
+        if private_count:
+            sent_any = True
+            logger.info(
+                "Private MQTT POSITION published on %d channel(s)",
+                private_count,
+            )
+
+        if sent_any:
+            self._schedule.mark_sent()
+
+    def _publish_private_positions(self) -> int:
+        """Generate this node's private-channel POSITION directly for MQTT."""
+        mqtt = self._mqtt_publisher
+        if mqtt is None or self._raw_coords_provider is None:
+            return 0
+        if not hasattr(mqtt, "private_position_targets"):
+            return 0
+
+        targets = mqtt.private_position_targets()
+        if not targets:
+            return 0
+
+        coords = self._raw_coords_provider()
+        if coords is None:
+            logger.debug("Private MQTT POSITION skipped: no raw coordinates")
+            return 0
+        lat, lon, alt = coords
+
+        if not hasattr(self._tx, "build_position_packet"):
+            logger.warning(
+                "Private MQTT POSITION skipped: TX service cannot build packets"
+            )
+            return 0
+
+        published = 0
+        for channel_index, channel_name, precision_bits in targets:
+            built = self._tx.build_position_packet(
+                lat,
+                lon,
+                alt,
+                channel=channel_index,
+                precision_bits=precision_bits,
+            )
+            if built is None:
+                logger.warning(
+                    "Private MQTT POSITION build failed: channel=%s",
+                    channel_name,
+                )
+                continue
+            raw_packet, _packet_id, _channel_hash = built
+            if mqtt.publish_own_private_position(
+                raw_packet,
+                channel_name=channel_name,
+                precision_bits=precision_bits,
+            ):
+                published += 1
+        return published

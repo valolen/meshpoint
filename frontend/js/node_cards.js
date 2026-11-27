@@ -260,7 +260,8 @@ class NodeCards {
                     dialog.close();
                     const names = new Map(this._nodes.map(n => [norm(n.node_id), n.display_name || n.long_name || n.short_name]));
                     new PacketDetailModal().show(match, {localNodeId:this._localNodeId, elapsedMs:Date.now()-started,
-                        formatNodeId:id => names.get(norm(id)) || '!' + norm(id)});
+                        formatNodeId:id => names.get(norm(id)) || '!' + norm(id),
+                        shortNodeId:id => this._nodes.find(n => norm(n.node_id) === norm(id))?.short_name || norm(id).slice(-4)});
                     return;
                 }
                 await new Promise(resolve => setTimeout(resolve, 1000));

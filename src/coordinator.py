@@ -385,6 +385,25 @@ class PipelineCoordinator:
             and abs(signal.bandwidth_khz - radio.bandwidth_khz) < 0.1
         )
 
+    async def receive_mqtt_local(self, raw: bytes, channel_name: str, data) -> None:
+        """Deliver a validated MQTT envelope locally, without RF/relay/uplink."""
+        packet = self._router.meshtastic_decoder.decode(
+            raw, signal=None, pre_decoded={
+                "portnum": int(data.portnum),
+                "payload": bytes(data.payload),
+                "request_id": int(data.request_id),
+                "bitfield": int(data.bitfield),
+                "channel_name": channel_name,
+            },
+        )
+        if packet is None or not packet.decrypted:
+            raise ValueError("Invalid local MQTT payload")
+        packet.capture_source = "mqtt"
+        packet.via_mqtt = True
+        # Do not feed RF node metrics or upstream roster from MQTT delivery.
+        await self._packet_repo.insert(packet)
+        self._notify_callbacks(packet)
+
     async def _process_capture(self, raw: RawCapture) -> None:
         # Match bare "meshcore_usb" and labelled forms (meshcore_usb_868, …)
         # so Wave B multi-companion tags still hit the event adapter.

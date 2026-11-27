@@ -6,6 +6,7 @@ class NodeDrawer {
     constructor(drawerId, options = {}) {
         this._drawer = document.getElementById(drawerId);
         this._onSendMessage = options.onSendMessage || null;
+        this._onTraceroute = options.onTraceroute || null;
         this._onViewOnMap = options.onViewOnMap || null;
         this._currentNode = null;
         this._sections = {};
@@ -142,6 +143,13 @@ class NodeDrawer {
             div.appendChild(mapBtn);
         }
 
+        if (this._onTraceroute && (n.protocol || 'meshtastic') === 'meshtastic' && /^!?[0-9a-f]{8}$/i.test(n.node_id)) {
+            const traceBtn = document.createElement('button');
+            traceBtn.className = 'nd-action-btn';
+            traceBtn.textContent = 'Traceroute';
+            traceBtn.addEventListener('click', () => this._onTraceroute(n));
+            div.appendChild(traceBtn);
+        }
         return div;
     }
 

@@ -232,18 +232,22 @@ class NodeCards {
         if (this._traceRunning) return;
         this._traceRunning = true;
         const dialog = document.createElement('dialog');
-        dialog.style.cssText = 'background:#172231;color:#e5e7eb;border:1px solid #64748b;border-radius:8px;padding:24px;max-width:90vw';
+        dialog.style.cssText = 'position:fixed;inset:0;margin:auto;width:min(420px,90vw);height:fit-content;box-sizing:border-box;background:#151e2b;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:22px;max-width:90vw;color-scheme:dark;box-shadow:0 12px 40px #0008';
         const status = document.createElement('p');
-        status.textContent = 'Sending traceroute to ' + destination + '…';
+        status.style.cssText = 'font-size:15px;font-weight:600;margin:0 0 16px;overflow-wrap:anywhere';
+        status.textContent = 'Traceroute';
         const close = document.createElement('button');
         close.textContent = 'Close';
+        close.className = 'terminal-button';
         close.onclick = () => dialog.close();
         dialog.append(status, close);
         document.body.appendChild(dialog);
         dialog.showModal();
         const norm = v => String(v || '').replace(/^!/, '').toLowerCase();
+        const node = this._nodes.find(n => norm(n.node_id) === norm(destination));
+        const target = node?.display_name || node?.long_name || node?.short_name || '!' + norm(destination);
         try {
-            status.textContent = 'Traceroute to ' + destination;
+            status.textContent = 'Traceroute to ' + target;
             const channelLabel = document.createElement('label');
             channelLabel.textContent = 'Channel ';
             const channel = document.createElement('select');
@@ -256,11 +260,18 @@ class NodeCards {
             hopLabel.append(hops);
             const send = document.createElement('button');
             send.textContent = 'Start traceroute';
+            send.className = 'terminal-button terminal-button--primary';
+            for (const label of [channelLabel, hopLabel]) label.style.cssText = 'display:flex;flex-direction:column;gap:6px;color:#aab8ca;font-size:12px;flex:1;min-width:0';
+            for (const select of [channel,hops]) select.style.cssText = 'width:100%;padding:8px;border:1px solid #334155;border-radius:5px;background:#0d1520;color:#e5e7eb;font:inherit';
             send.disabled = true;
             const controls = document.createElement('div');
-            controls.style.cssText = 'display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:12px 0';
-            controls.append(channelLabel, hopLabel, send);
+            controls.style.cssText = 'display:flex;gap:12px;align-items:center;margin:12px 0 20px';
+            controls.append(channelLabel, hopLabel);
+            const actions = document.createElement('div');
+            actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px';
             dialog.insertBefore(controls, close);
+            dialog.append(actions);
+            actions.append(close, send);
             const selection = new Promise(resolve => {
                 dialog.addEventListener('close', () => resolve(false), {once:true});
                 send.onclick = () => resolve(true);
@@ -282,7 +293,8 @@ class NodeCards {
             if (!(await selection) || !dialog.open) return;
             const params = new URLSearchParams({channel:channel.value, hop_limit:hops.value});
             controls.remove();
-            status.textContent = 'Sending traceroute to ' + destination + '…';
+            send.remove();
+            status.textContent = 'Sending traceroute to ' + target + '…';
             const started = Date.now();
             const tx = await fetch('/api/messages/traceroute/' + encodeURIComponent(destination) + '?' + params, {method:'POST'});
             const result = await tx.json();

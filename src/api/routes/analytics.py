@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from src.analytics.signal_analyzer import SignalAnalyzer
 from src.analytics.traffic_monitor import TrafficMonitor
@@ -52,18 +52,20 @@ async def signal_summary():
 
 
 @router.get("/topology")
-async def network_topology():
+async def network_topology(hours: int = Query(24, ge=1, le=168)):
     """Extract node-to-node links from NEIGHBORINFO packets."""
     if not _packet_repo:
         return []
 
     rows = await _packet_repo._db.fetch_all(
         """
-        SELECT source_id, decoded_payload, rssi, snr, timestamp
+        SELECT source_id, destination_id, packet_type, decoded_payload, rssi, snr, timestamp
         FROM packets
-        WHERE packet_type = 'neighborinfo' AND decoded_payload IS NOT NULL
+        WHERE packet_type IN ('neighborinfo', 'traceroute') AND decrypted = 1
+          AND decoded_payload IS NOT NULL AND julianday(timestamp) >= julianday('now', ?)
         ORDER BY timestamp DESC
         """,
+        (f"-{hours} hours",),
     )
 
     seen_links: dict[str, dict] = {}
@@ -72,6 +74,26 @@ async def network_topology():
         try:
             payload = json.loads(row["decoded_payload"])
         except (json.JSONDecodeError, TypeError):
+            continue
+
+        if row["packet_type"] == "traceroute":
+            if not payload.get("request_id"):
+                continue
+            def add_path(nodes, snrs):
+                for i, (src, dst) in enumerate(zip(nodes, nodes[1:])):
+                    if not all(isinstance(n, str) and len(n) == 8 and n != "ffffffff" and all(c in "0123456789abcdef" for c in n) for n in (src, dst)) or src == dst:
+                        continue
+                    if i >= len(snrs) or not isinstance(snrs[i], (int, float)) or snrs[i] == -128:
+                        continue
+                    key = f"{src}>{dst}"
+                    if key not in seen_links:
+                        seen_links[key] = {"source": src, "target": dst, "snr": snrs[i] / 4, "rssi": None, "last_seen": row["timestamp"], "evidence": "traceroute"}
+            route = payload.get("route", [])
+            back = payload.get("route_back")
+            if isinstance(route, list):
+                add_path([row["destination_id"], *route, source], payload.get("snr_towards") or [])
+            if isinstance(back, list):
+                add_path([source, *back, row["destination_id"]], payload.get("snr_back") or [])
             continue
 
         neighbors = payload.get("neighbors", [])
@@ -86,8 +108,9 @@ async def network_topology():
                     seen_links[link_key] = {
                         "source": source,
                         "target": nid,
-                        "rssi": row.get("rssi"),
-                        "snr": row.get("snr"),
+                        "rssi": None,
+                        "snr": neighbor.get("snr"),
+                        "evidence": "neighborinfo",
                         "last_seen": row["timestamp"],
                     }
 

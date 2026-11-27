@@ -320,6 +320,23 @@ class MeshtasticPacketBuilder:
         )
         return header + ciphertext
 
+    def build_traceroute_request(
+        self, source_id: int, dest: int, packet_id: int, *,
+        channel_key: bytes | None = None, channel_hash: int = 0x08,
+        hop_limit: int = 3,
+    ) -> bytes | None:
+        """Build a channel-encrypted route probe so relays can append hops."""
+        inner = self._serialize_data(PORTNUM_TRACEROUTE, b"") + b"\x18\x01"
+        ciphertext = self._crypto.encrypt_meshtastic(
+            inner, packet_id, source_id, key=channel_key
+        )
+        if ciphertext is None:
+            return None
+        return self._build_header(
+            dest, source_id, packet_id, hop_limit=hop_limit,
+            hop_start=hop_limit, want_ack=True, channel_hash=channel_hash,
+        ) + ciphertext
+
     def build_traceroute_reply(
         self,
         source_id: int,

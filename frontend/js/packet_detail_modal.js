@@ -157,7 +157,7 @@ class PacketDetailModal {
         const render = (label, nodes, snrs) => {
             const reverse = label.startsWith('Return');
             const parts = [];
-            const nodeChip = n => '<span title="' + this._esc('!' + id(n)) + '" style="display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:0 7px;border:1px solid #40556c;border-radius:4px;background:rgba(100,130,160,.12);white-space:nowrap;font-size:11px">' + this._esc(fmt(n)) + '</span>';
+            const nodeChip = n => '<span title="' + this._esc(fmt(n) + ' · !' + id(n)) + '" style="display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:0 7px;border:1px solid #40556c;border-radius:4px;background:rgba(100,130,160,.12);white-space:nowrap;font-size:11px">' + this._esc(id(n) === 'ffffffff' ? 'Unknown' : (opts.shortNodeId?.(id(n)) || id(n).slice(-4))) + '</span>';
             const link = v => {
                 const known = Number.isFinite(v) && v !== -128;
                 const db = known ? v / 4 : null;
@@ -170,7 +170,7 @@ class PacketDetailModal {
                 if (j) parts.push(link(snrs[reverse ? i : i - 1]));
                 parts.push(nodeChip(nodes[i]));
             });
-            rows.push({html: '<div class="pdm-row" style="display:block"><div class="pdm-row__key">' + label + '</div><div style="display:flex;flex-wrap:nowrap;overflow-x:auto;align-items:center;gap:4px;padding:5px 0 8px;margin:3px 0">' + parts.join('') + '</div></div>'});
+            rows.push({html: '<div class="pdm-row" style="display:block"><div class="pdm-row__key">' + label + '</div><div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:5px 0 8px;margin:3px 0">' + parts.join('') + '</div></div>'});
         };
         if (response) {
             render('Forward', [packet.destination_id, ...route, packet.source_id], p.snr_towards || []);

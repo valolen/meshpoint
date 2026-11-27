@@ -126,10 +126,13 @@ async def send_message(
 
 
 @router.post("/traceroute/{destination}")
-async def send_traceroute(destination: str, _claims: SessionClaims = Depends(require_admin)):
+async def send_traceroute(destination: str, channel: int = 0, hop_limit: Optional[int] = None,
+                         _claims: SessionClaims = Depends(require_admin)):
     if _tx_service is None:
         raise HTTPException(503, "Transmit service not available")
-    result = await _tx_service.send_traceroute(destination)
+    if not 0 <= channel <= 7 or (hop_limit is not None and not 0 <= hop_limit <= 7):
+        raise HTTPException(400, "Invalid traceroute channel or hop limit")
+    result = await _tx_service.send_traceroute(destination, channel=channel, hop_limit=hop_limit)
     return {"success": result.success, "packet_id": result.packet_id,
             "error": result.error, "airtime_ms": result.airtime_ms}
 

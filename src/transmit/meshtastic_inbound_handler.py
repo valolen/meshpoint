@@ -28,6 +28,9 @@ class MeshtasticInboundHandler:
             return
 
         if packet.packet_type == PacketType.TRACEROUTE:
+            if (packet.decoded_payload or {}).get("request_id"):
+                logger.info("Traceroute response from %s: %s", packet.source_id, packet.decoded_payload)
+                return
             logger.info(
                 "Inbound traceroute from %s (id=%s ch=0x%02x)",
                 packet.source_id,

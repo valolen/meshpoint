@@ -155,13 +155,22 @@ class PacketDetailModal {
         const back = Array.isArray(p.route_back) ? p.route_back : [];
         const rows = [];
         const render = (label, nodes, snrs) => {
-            const parts = nodes.map((n, i) => {
-                const v = snrs[i - 1];
-                const snr = Number.isFinite(v) && v !== -128 ? (v / 4).toFixed(1) + ' dB' : '?';
-                return (i ? '<span style="color:var(--text-secondary,#999)"> → ' + this._esc(snr) + ' → </span>' : '') +
-                    '<span class="nc-chip">' + this._esc(fmt(n)) + '</span>';
+            const reverse = label.startsWith('Return');
+            const parts = [];
+            const nodeChip = n => '<span title="' + this._esc('!' + id(n)) + '" style="display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:0 7px;border:1px solid #40556c;border-radius:4px;background:rgba(100,130,160,.12);white-space:nowrap;font-size:11px">' + this._esc(fmt(n)) + '</span>';
+            const link = v => {
+                const known = Number.isFinite(v) && v !== -128;
+                const db = known ? v / 4 : null;
+                const color = !known ? '#8291a3' : db >= -7 ? '#4ade80' : db >= -14 ? '#fbbf24' : '#f87171';
+                return '<span style="display:inline-flex;flex-direction:column;align-items:center;min-width:49px;color:' + color + ';font-size:10px;line-height:13px"><span>' + (known ? db.toFixed(1) + ' dB' : '? dB') + '</span><span style="font-size:20px;line-height:15px">' + (reverse ? '⟵' : '⟶') + '</span></span>';
+            };
+            const order = nodes.map((_, i) => i);
+            if (reverse) order.reverse();
+            order.forEach((i, j) => {
+                if (j) parts.push(link(snrs[reverse ? i : i - 1]));
+                parts.push(nodeChip(nodes[i]));
             });
-            rows.push({html: '<div class="pdm-row" style="display:block"><div class="pdm-row__key">' + label + '</div><div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0">' + parts.join('') + '</div></div>'});
+            rows.push({html: '<div class="pdm-row" style="display:block"><div class="pdm-row__key">' + label + '</div><div style="display:flex;flex-wrap:nowrap;overflow-x:auto;align-items:center;gap:4px;padding:5px 0 8px;margin:3px 0">' + parts.join('') + '</div></div>'});
         };
         if (response) {
             render('Forward', [packet.destination_id, ...route, packet.source_id], p.snr_towards || []);

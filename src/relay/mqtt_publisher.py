@@ -16,6 +16,7 @@ import json
 import base64
 from dataclasses import replace
 import logging
+import struct
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -262,6 +263,123 @@ class MqttPublisher:
                 self._ha_discovery.clear_position(packet.source_id)
 
         return published
+
+    def private_position_targets(self) -> list[tuple[int, str, int]]:
+        """Private channels eligible for this node's MQTT POSITION.
+
+        The returned channel index matches TxService's channel numbering:
+        primary is 0 and configured private channels start at 1.
+        """
+        if (
+            not self._config.enabled
+            or not self._connected
+            or not self._client
+            or self._node_id is None
+        ):
+            return []
+
+        targets: list[tuple[int, str, int]] = []
+        for channel_index, (name, key_b64) in enumerate(
+            self._channel_keys.items(), start=1
+        ):
+            policy = self._channel_policies.get(name)
+            if not policy or policy.get("uplink_enabled") is not True:
+                continue
+            bits = policy.get("position_precision", 0)
+            if type(bits) is not int or not 1 <= bits <= 32:
+                continue
+            try:
+                key = _expand_key(base64.b64decode(key_b64, validate=True))
+            except (ValueError, TypeError):
+                continue
+            if key == _DEFAULT_PSK or len(key) not in (16, 32) or not any(key):
+                continue
+            targets.append((channel_index, name, bits))
+        return targets
+
+    def publish_own_private_position(
+        self,
+        raw_radio_packet: bytes,
+        *,
+        channel_name: str,
+        precision_bits: int,
+    ) -> bool:
+        """Publish a locally generated private POSITION as ciphertext only."""
+        if (
+            not self._config.enabled
+            or not self._connected
+            or not self._client
+            or self._node_id is None
+            or len(raw_radio_packet) <= 16
+        ):
+            return False
+
+        policy = self._channel_policies.get(channel_name)
+        if (
+            not policy
+            or policy.get("uplink_enabled") is not True
+            or policy.get("position_precision") != precision_bits
+        ):
+            return False
+
+        key_b64 = self._channel_keys.get(channel_name)
+        if not key_b64:
+            return False
+        try:
+            key = _expand_key(base64.b64decode(key_b64, validate=True))
+        except (ValueError, TypeError):
+            return False
+        if key == _DEFAULT_PSK or len(key) not in (16, 32) or not any(key):
+            return False
+
+        try:
+            destination, source, packet_id = struct.unpack(
+                "<III", raw_radio_packet[:12]
+            )
+        except struct.error:
+            return False
+        if destination != 0xFFFFFFFF or f"{source:08x}" != self._node_id:
+            return False
+
+        flags = raw_radio_packet[12]
+        channel_hash = raw_radio_packet[13]
+        expected_hash = _xor_hash(channel_name, key)
+        if channel_hash != expected_hash:
+            return False
+
+        packet = Packet(
+            packet_id=f"{packet_id:08x}",
+            source_id=f"{source:08x}",
+            destination_id="ffffffff",
+            protocol=Protocol.MESHTASTIC,
+            packet_type=PacketType.POSITION,
+            hop_limit=flags & 0x07,
+            hop_start=(flags >> 5) & 0x07,
+            want_ack=bool(flags & 0x08),
+            via_mqtt=False,
+            channel_hash=channel_hash,
+            encrypted_payload=raw_radio_packet[16:],
+            raw_radio_packet=raw_radio_packet,
+            decrypted=False,
+            remote_channel_name=channel_name,
+            capture_source="mqtt_local",
+        )
+        msg = self._mt_formatter._format_encrypted(packet)
+        if msg is None:
+            return False
+        result = self._client.publish(msg.topic, msg.payload, qos=1)
+        if result.rc != paho_mqtt.MQTT_ERR_SUCCESS:
+            return False
+
+        self._publish_count += 1
+        self._last_publish_monotonic = time.monotonic()
+        logger.info(
+            "MQTT own private POSITION published: channel=%s bits=%d id=%08x",
+            channel_name,
+            precision_bits,
+            packet_id,
+        )
+        return True
 
     def publish_map_report(self, report: MapReportData) -> bool:
         """Publish this Meshpoint's opt-in, MQTT-only map report."""

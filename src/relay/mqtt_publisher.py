@@ -56,8 +56,10 @@ class MqttPublisher:
         config: MqttConfig,
         device_name: str,
         channel_keys: Optional[dict[str, str]] = None,
+        node_id: int | None = None,
     ):
         self._config = config
+        self._node_id = f'{node_id:08x}' if node_id is not None else None
         self._gateway_id = _resolve_gateway_id(config.gateway_id, device_name)
         self._client: Optional[paho_mqtt.Client] = None
         self._connected = False
@@ -194,7 +196,7 @@ class MqttPublisher:
         name = self._resolve_channel_name(packet)
         policy = self._channel_policies.get(name, {})
         precision = policy.get("position_precision", self._config.location_precision)
-        own = packet.source_id.lower().lstrip("!") == self._gateway_id.lower().lstrip("!")
+        own = packet.source_id.lower().lstrip("!") == (self._node_id or self._gateway_id.lower().lstrip("!"))
         if packet.protocol == Protocol.MESHTASTIC and not own:
             if (packet.decoded_payload or {}).get("ok_to_mqtt") is not True:
                 return False
@@ -222,7 +224,7 @@ class MqttPublisher:
                 or packet.channel_hash != _xor_hash(name, _DEFAULT_PSK)
             ):
                 return False
-            precision = min(15, max(0, precision)) if own and type(precision) is int else 15
+            precision = min(15, max(0, precision)) if own and type(precision) is int else (0 if own and precision == "none" else 15)
         packet = prepare_packet(packet, precision)
         # Only preserve original RF ciphertext for known non-position broadcasts.
         # Do not bypass the shared location filter for POSITION or unknown types.

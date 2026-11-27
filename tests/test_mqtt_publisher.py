@@ -35,6 +35,7 @@ class TestGatewayId(unittest.TestCase):
             packet_type=PacketType.TEXT,
             decrypted=True,
             encrypted_payload=None,
+            via_mqtt=False,
             channel_hash=118,
             remote_channel_name=None,
         )
@@ -53,6 +54,7 @@ class TestGatewayId(unittest.TestCase):
             packet_type=PacketType.TEXT,
             decrypted=True,
             encrypted_payload=None,
+            via_mqtt=False,
             channel_hash=0,
             remote_channel_name="LongTurbo",
         )

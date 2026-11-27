@@ -122,13 +122,14 @@ class ChannelsConfigCard {
                 row.append(label);
             }
             const label = document.createElement('label');
-            label.textContent = ' Position precision (bits): ';
+            label.textContent = ' Own position precision (bits): ';
             const bits = document.createElement('input');
             bits.type = 'number';
             bits.min = '0';
-            bits.max = '32';
+            bits.max = ch.mqtt.max_position_precision === 15 ? '15' : '32';
+            bits.required = true;
             bits.step = '1';
-            bits.value = ch.mqtt.position_precision;
+            bits.value = Math.min(Number(bits.max), ch.mqtt.position_precision);
             bits.dataset.policy = 'position_precision';
             label.append(bits);
             row.append(label);

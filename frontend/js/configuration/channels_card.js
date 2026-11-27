@@ -72,7 +72,7 @@ class ChannelsConfigCard {
             </article>
             <article class="cfg-card" data-mqtt-channel-card>
                 <header class="cfg-card__head"><h3 class="cfg-card__title">Channel MQTT settings</h3>
-                <p class="cfg-card__hint">Per-channel policy. Restart required. Downlink and new uplink policy are pending transport implementation.</p></header>
+                <p class="cfg-card__hint">Per-channel MQTT policy. Own POSITION uses the regular position schedule; 0 bits disables sharing on that channel. Downlink is still pending.</p></header>
                 <div data-mqtt-channel-rows></div>
                 <div class="cfg-card__actions"><button type="button" class="terminal-button terminal-button--primary" data-mqtt-channel-save>Save MQTT settings</button></div>
                 <p class="cfg-status" data-mqtt-channel-status></p>

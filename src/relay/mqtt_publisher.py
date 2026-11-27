@@ -104,6 +104,7 @@ class MqttPublisher:
         self._downlink_local = None
         self._downlink_primary = None
         self._downlink_seen = OrderedDict()
+        self._own_trace_ids = OrderedDict()
         self._downlink_pending = 0
 
 
@@ -214,6 +215,10 @@ class MqttPublisher:
         policy = self._channel_policies.get(name, {})
         precision = policy.get("position_precision", self._config.location_precision)
         own = packet.source_id.lower().lstrip("!") == (self._node_id or self._gateway_id.lower().lstrip("!"))
+        if own and packet.packet_type == PacketType.TRACEROUTE:
+            published_at = self._own_trace_ids.get(int(packet.packet_id, 16))
+            if published_at is not None and time.monotonic() - published_at < 600:
+                return False
         if packet.protocol == Protocol.MESHTASTIC and not own:
             if (packet.decoded_payload or {}).get("ok_to_mqtt") is not True:
                 return False
@@ -312,6 +317,51 @@ class MqttPublisher:
                 continue
             targets.append((channel_index, name, bits))
         return targets
+
+    def publish_own_private_trace(self, raw: bytes, channel: int) -> bool:
+        """Publish an original locally generated traceroute without RF loopback."""
+        if not self._config.enabled or not self._connected or not self._client:
+            return False
+        names = list(self._channel_keys)
+        if not 1 <= channel <= len(names) or not 16 < len(raw) <= 255:
+            return False
+        name = names[channel - 1]
+        if self._channel_policies.get(name, {}).get("uplink_enabled") is not True:
+            return False
+        try:
+            key = _expand_key(base64.b64decode(self._channel_keys[name], validate=True))
+            if key == _DEFAULT_PSK or len(key) not in (16, 32) or not any(key):
+                return False
+            dest, source, pid = struct.unpack("<III", raw[:12])
+            flags, channel_hash = raw[12:14]
+            if (f"{source:08x}" != self._node_id or channel_hash != _xor_hash(name, key)
+                    or flags & 0x10 or not 0 < dest < 0xffffffff):
+                return False
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            from meshtastic.protobuf.mesh_pb2 import Data
+            decryptor = Cipher(algorithms.AES(key), modes.CTR(struct.pack("<QI", pid, source) + bytes(4))).decryptor()
+            data = Data.FromString(decryptor.update(raw[16:]) + decryptor.finalize())
+            if data.portnum != 70:
+                return False
+            packet = Packet(packet_id=f"{pid:08x}", source_id=f"{source:08x}",
+                            destination_id=f"{dest:08x}", protocol=Protocol.MESHTASTIC,
+                            packet_type=PacketType.TRACEROUTE, hop_limit=flags & 7,
+                            hop_start=(flags >> 5) & 7, want_ack=bool(flags & 8),
+                            channel_hash=channel_hash, encrypted_payload=raw[16:],
+                            remote_channel_name=name, capture_source="mqtt_local")
+            msg = self._mt_formatter._format_encrypted(packet)
+            if msg is None or self._client.publish(msg.topic, msg.payload, qos=1).rc != 0:
+                return False
+            self._publish_count += 1
+            self._last_publish_monotonic = time.monotonic()
+            self._own_trace_ids[pid] = time.monotonic()
+            while len(self._own_trace_ids) > 1024:
+                self._own_trace_ids.popitem(last=False)
+            logger.info("MQTT own traceroute published channel=%s id=%08x", name, pid)
+            return True
+        except Exception:
+            logger.exception("MQTT own traceroute publish failed")
+            return False
 
     def publish_own_private_position(
         self,

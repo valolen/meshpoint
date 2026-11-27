@@ -13,6 +13,8 @@ JSON mirror for Home Assistant and Node-RED consumers.
 from __future__ import annotations
 
 import json
+import asyncio
+from collections import OrderedDict
 import base64
 from dataclasses import replace
 import logging
@@ -97,6 +99,12 @@ class MqttPublisher:
         )
         self._ha_discovery: Optional[HomeAssistantDiscovery] = None
         self._topic_prefix = self._resolve_topic_prefix()
+        self._downlink_loop = None
+        self._downlink_tx = None
+        self._downlink_primary = None
+        self._downlink_seen = OrderedDict()
+        self._downlink_pending = 0
+
 
     def set_local_node_id(self, node_id: int) -> None:
         """Bind MQTT-originated packets to the TxService's resolved identity."""
@@ -153,6 +161,7 @@ class MqttPublisher:
             )
             self._client.on_connect = self._on_connect
             self._client.on_disconnect = self._on_disconnect
+            self._client.on_message = self._on_downlink_message
 
             if self._config.username:
                 self._client.username_pw_set(
@@ -502,6 +511,110 @@ class MqttPublisher:
 
         return messages
 
+    def configure_downlink(self, tx_service, primary_name: str, primary_key: str) -> None:
+        """Bind native TX on the asyncio thread, before accepting MQTT input."""
+        self._downlink_loop = asyncio.get_running_loop()
+        self._downlink_tx = tx_service
+        self._downlink_primary = (primary_name, primary_key)
+        if self._connected and self._client:
+            self._subscribe_downlink(self._client)
+
+    def _downlink_keys(self) -> dict:
+        if self._downlink_tx is None or self._downlink_primary is None:
+            return {}
+        keys = {self._downlink_primary[0]: self._downlink_primary[1]}
+        keys.update(self._channel_keys)
+        return {name: key for name, key in keys.items()
+                if self._channel_policies.get(name, {}).get("downlink_enabled") is True
+                and name and not any(c in name for c in "/+#")}
+
+    def _subscribe_downlink(self, client) -> None:
+        for name in self._downlink_keys():
+            topic = f"{self._topic_prefix}/2/e/{name}/+"
+            rc, _ = client.subscribe(topic, qos=1)
+            logger.info("MQTT downlink subscribe: %s rc=%s", topic, rc)
+
+    def _on_downlink_message(self, client, userdata, message) -> None:
+        if message.retain or len(message.payload) > 4096:
+            return
+        loop = self._downlink_loop
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(self._accept_downlink, message.topic, bytes(message.payload))
+            except RuntimeError:
+                pass
+
+    def _accept_downlink(self, topic: str, payload: bytes) -> None:
+        """Validate envelopes before scheduling bounded native RF transmission."""
+        try:
+            from meshtastic.protobuf.mqtt_pb2 import ServiceEnvelope
+            from meshtastic.protobuf.mesh_pb2 import Data
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            from google.protobuf.message import DecodeError
+            prefix = f"{self._topic_prefix}/2/e/"
+            if not topic.startswith(prefix):
+                return
+            parts = topic[len(prefix):].split("/")
+            if len(parts) != 2:
+                return
+            name, gateway = parts
+            keys = self._downlink_keys()
+            if name not in keys or gateway == self._gateway_id:
+                return
+            env = ServiceEnvelope.FromString(payload)
+            if env.channel_id != name or env.gateway_id != gateway or not env.HasField("packet"):
+                return
+            pkt = env.packet
+            source = getattr(pkt, "from")
+            if (not 0 < source < 0xffffffff or not pkt.id or
+                    f"{source:08x}" == self._node_id or pkt.via_mqtt or
+                    pkt.to != 0xffffffff or pkt.hop_limit > 7 or
+                    pkt.hop_start > 7 or pkt.hop_limit > pkt.hop_start):
+                return
+            key = _expand_key(base64.b64decode(keys[name], validate=True))
+            if len(key) not in (16, 32) or not any(key):
+                return
+            channel_hash = _xor_hash(name, key)
+            # Initially accept encrypted broadcast only; never re-encrypt an
+            # altered decoded payload under an existing source/id nonce.
+            if not pkt.HasField("encrypted") or not pkt.encrypted:
+                return
+            if pkt.channel != channel_hash:
+                return
+            nonce = struct.pack("<QI", pkt.id, source) + bytes(4)
+            decryptor = Cipher(algorithms.AES(key), modes.CTR(nonce)).decryptor()
+            data = Data.FromString(decryptor.update(pkt.encrypted) + decryptor.finalize())
+            if data.portnum not in (1, 3, 4, 67):
+                return
+            flags = pkt.hop_limit | (pkt.hop_start << 5)
+            raw = struct.pack("<IIIBBBB", pkt.to, source, pkt.id, flags,
+                              channel_hash, 0, 0) + pkt.encrypted
+            if not 16 < len(raw) <= 255 or self._downlink_pending >= 4:
+                return
+            now = time.monotonic()
+            while self._downlink_seen:
+                if len(self._downlink_seen) < 4096 and now - next(iter(self._downlink_seen.values())) < 3600:
+                    break
+                self._downlink_seen.popitem(last=False)
+            identity = (source, pkt.id)
+            if identity in self._downlink_seen:
+                return
+            self._downlink_seen[identity] = now
+            self._downlink_pending += 1
+            asyncio.create_task(self._transmit_downlink(raw, name, pkt.id))
+        except (ValueError, TypeError, AttributeError, DecodeError):
+            logger.debug("MQTT downlink rejected malformed envelope")
+
+    async def _transmit_downlink(self, raw: bytes, name: str, packet_id: int) -> None:
+        try:
+            result = await self._downlink_tx.send_mqtt_downlink(raw)
+            logger.info("MQTT downlink %s channel=%s id=%08x",
+                        "TX OK" if result.success else "TX blocked", name, packet_id)
+        except Exception:
+            logger.exception("MQTT downlink TX failed")
+        finally:
+            self._downlink_pending -= 1
+
     def _on_connect(self, client, userdata, flags, rc) -> None:
         self._last_connect_rc = rc
         if rc == 0:
@@ -509,6 +622,7 @@ class MqttPublisher:
             self._connected_since_monotonic = time.monotonic()
             logger.info("MQTT publisher started as %s", self._gateway_id)
             logger.debug("MQTT connected to broker=%s", self._config.broker)
+            self._subscribe_downlink(client)
             if self._config.homeassistant_discovery and self._client:
                 self._ha_discovery = HomeAssistantDiscovery(self._client, self._gateway_id)
         else:

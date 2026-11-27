@@ -799,6 +799,15 @@ def _build_channel_list(mt_config) -> list[dict]:
             "enabled": True,
         })
 
+    if _config:
+        mqtt = _config.mqtt
+        for ch in channels:
+            policy = mqtt.channel_settings.get(ch["name"], {})
+            ch["mqtt"] = {
+                "uplink_enabled": policy.get("uplink_enabled", ch["name"] in mqtt.publish_channels),
+                "downlink_enabled": policy.get("downlink_enabled", False),
+                "position_precision": policy.get("position_precision", {"none": 0, "approximate": 15, "exact": 32}.get(mqtt.location_precision, 0)),
+            }
     return channels
 
 
@@ -813,3 +822,35 @@ def _compute_hash_safe(name: str, key_b64: str) -> str:
         except Exception:
             pass
     return "--"
+
+
+class ChannelMqttUpdate(BaseModel):
+    uplink_enabled: bool = False
+    downlink_enabled: bool = False
+    position_precision: int = Field(0, ge=0, le=32)
+
+
+@router.put("/channels/mqtt")
+async def update_channel_mqtt(
+    req: dict[str, ChannelMqttUpdate],
+    claims: SessionClaims = Depends(require_admin),
+):
+    if _config is None:
+        raise HTTPException(503, "Config not loaded")
+    from src.relay.channel_resolver import _DEFAULT_PSK, _expand_key
+    known = {ch["name"]: ch for ch in _build_channel_list(_config.meshtastic)}
+    settings = {}
+    for name, policy in req.items():
+        if name not in known or any(c in name for c in "/+#"):
+            raise HTTPException(400, "Invalid channel name")
+        try:
+            key = _expand_key(base64.b64decode(known[name]["psk_b64"], validate=True))
+        except ValueError:
+            raise HTTPException(400, "Invalid channel key")
+        entry = policy.model_dump()
+        if key == _DEFAULT_PSK:
+            entry["position_precision"] = min(15, entry["position_precision"])
+        settings[name] = entry
+    save_section_to_yaml("mqtt", {"channel_settings": settings})
+    _config.mqtt.channel_settings = settings
+    return {"saved": True, "restart_required": True}

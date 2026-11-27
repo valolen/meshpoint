@@ -12,6 +12,7 @@ from src.api.audit.dependencies import get_audit_writer
 from src.api.auth.dependencies import require_admin
 from src.api.auth.jwt_session import SessionClaims
 from src.config import AppConfig, save_section_to_yaml
+from src.relay.channel_resolver import STANDARD_PRESETS
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ def build_upstream_status(upstream) -> dict:
         "reconnect_interval_seconds": upstream.reconnect_interval_seconds,
         "buffer_max_size": upstream.buffer_max_size,
         "auth_token_set": bool(token),
+        "publish_channels": upstream.publish_channels,
+        "available_channels": STANDARD_PRESETS,
     }
 
 
@@ -51,6 +54,7 @@ class UpstreamUpdate(BaseModel):
     buffer_max_size: int = Field(5000, ge=100, le=100_000)
     auth_token: str | None = None
     auth_token_unchanged: bool = True
+    publish_channels: list[str] | None = None
 
 
 @router.put("/upstream")
@@ -72,6 +76,11 @@ async def update_upstream(
         "reconnect_interval_seconds": req.reconnect_interval_seconds,
         "buffer_max_size": req.buffer_max_size,
     }
+
+    if req.publish_channels is not None:
+        if any(name not in STANDARD_PRESETS for name in req.publish_channels):
+            raise HTTPException(400, "Only standard public channels are allowed")
+        updates["publish_channels"] = list(dict.fromkeys(req.publish_channels))
 
     if not req.auth_token_unchanged and req.auth_token is not None:
         token = req.auth_token.strip()
@@ -96,6 +105,8 @@ async def update_upstream(
 
         try:
             save_section_to_yaml("upstream", updates)
+            if "publish_channels" in updates:
+                upstream.publish_channels = updates["publish_channels"]
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
 

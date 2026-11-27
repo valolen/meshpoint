@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS packets (
     frequency_mhz    REAL,
     spreading_factor INTEGER,
     bandwidth_khz    REAL,
+    coding_rate      TEXT,
     capture_source   TEXT,
     timestamp        TEXT NOT NULL
 );
@@ -120,6 +121,9 @@ class DatabaseManager:
     async def _run_migrations(self) -> None:
         cursor = await self._connection.execute("PRAGMA table_info(packets)")
         pkt_cols = {row[1] for row in await cursor.fetchall()}
+        if "coding_rate" not in pkt_cols:
+            await self._connection.execute("ALTER TABLE packets ADD COLUMN coding_rate TEXT")
+            logger.info("Migration: added coding_rate column to packets table")
         if "relay_node" not in pkt_cols:
             await self._connection.execute(
                 "ALTER TABLE packets ADD COLUMN relay_node INTEGER DEFAULT 0"

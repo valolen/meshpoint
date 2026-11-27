@@ -472,7 +472,7 @@ class TxService:
         return await self._send_built_packet(packet_bytes, packet_id, label="routing ACK")
 
     async def send_traceroute(
-        self, destination: str | int, channel: int = 0
+        self, destination: str | int, channel: int = 0, hop_limit: int | None = None
     ) -> SendResult:
         """Initiate a native channel-encrypted Meshtastic traceroute."""
         if not self.meshtastic_enabled or self._wrapper is None:
@@ -483,9 +483,18 @@ class TxService:
         builder = self._get_builder()
         if builder is None:
             return SendResult(success=False, protocol="meshtastic", error="Builder unavailable")
+        if not 0 <= channel <= 7 or self._crypto is None or (
+            channel > 0 and channel > len(self._crypto._keys)
+        ):
+            return SendResult(success=False, protocol="meshtastic", error="Invalid traceroute channel")
         channel_hash, channel_key = self._resolve_channel(channel)
+        if channel > 0 and channel_key is None:
+            return SendResult(success=False, protocol="meshtastic", error="Channel key unavailable")
         packet_id = self._next_packet_id()
-        hop_limit = self._config.hop_limit if self._config else DEFAULT_HOP_LIMIT
+        if hop_limit is None:
+            hop_limit = self._config.hop_limit if self._config else DEFAULT_HOP_LIMIT
+        if not 0 <= hop_limit <= 7:
+            return SendResult(success=False, protocol="meshtastic", error="Invalid hop limit")
         packet_bytes = builder.build_traceroute_request(
             self._source_node_id, dest, packet_id,
             channel_key=channel_key, channel_hash=channel_hash,

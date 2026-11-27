@@ -471,6 +471,32 @@ class TxService:
 
         return await self._send_built_packet(packet_bytes, packet_id, label="routing ACK")
 
+    async def send_traceroute(
+        self, destination: str | int, channel: int = 0
+    ) -> SendResult:
+        """Initiate a native channel-encrypted Meshtastic traceroute."""
+        if not self.meshtastic_enabled or self._wrapper is None:
+            return SendResult(success=False, protocol="meshtastic", error="Native TX unavailable")
+        dest = self._resolve_destination(destination, Protocol.MESHTASTIC)
+        if dest in RESERVED_NODE_IDS or dest == self._source_node_id or not 0 < dest <= 0xffffffff:
+            return SendResult(success=False, protocol="meshtastic", error="Invalid traceroute destination")
+        builder = self._get_builder()
+        if builder is None:
+            return SendResult(success=False, protocol="meshtastic", error="Builder unavailable")
+        channel_hash, channel_key = self._resolve_channel(channel)
+        packet_id = self._next_packet_id()
+        hop_limit = self._config.hop_limit if self._config else DEFAULT_HOP_LIMIT
+        packet_bytes = builder.build_traceroute_request(
+            self._source_node_id, dest, packet_id,
+            channel_key=channel_key, channel_hash=channel_hash,
+            hop_limit=hop_limit,
+        )
+        if packet_bytes is None:
+            return SendResult(success=False, protocol="meshtastic", error="Traceroute build failed")
+        return await self._send_built_packet(
+            packet_bytes, packet_id, label="traceroute request"
+        )
+
     async def send_traceroute_reply(self, original) -> SendResult:
         """Reply to a traceroute probe addressed to this node."""
         if not self.meshtastic_enabled:

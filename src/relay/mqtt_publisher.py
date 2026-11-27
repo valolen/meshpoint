@@ -13,6 +13,8 @@ JSON mirror for Home Assistant and Node-RED consumers.
 from __future__ import annotations
 
 import json
+import base64
+from dataclasses import replace
 import logging
 import time
 from datetime import datetime, timezone
@@ -20,7 +22,7 @@ from typing import Optional
 
 from src.config import MqttConfig
 from src.models.packet import Packet, PacketType, Protocol
-from src.relay.channel_resolver import ChannelResolver
+from src.relay.channel_resolver import ChannelResolver, _DEFAULT_PSK, _expand_key, _xor_hash, STANDARD_PRESETS
 from src.relay.mqtt_privacy import is_broadcast, prepare_packet
 from src.relay.map_report import MapReportData, build_map_report_message
 from src.relay.mqtt_formatter import (
@@ -73,6 +75,8 @@ class MqttPublisher:
             ch.lower() for ch in config.publish_channels
         )
 
+        self._channel_keys = dict(channel_keys or {})
+        self._channel_policies = {name: dict(policy) for name, policy in config.channel_settings.items()}
         self._channel_resolver = ChannelResolver(channel_keys=channel_keys)
 
         self._mt_formatter = MeshtasticMqttFormatter(
@@ -187,7 +191,36 @@ class MqttPublisher:
             return False
 
         original = packet
-        packet = prepare_packet(packet, self._config.location_precision)
+        name = self._resolve_channel_name(packet)
+        policy = self._channel_policies.get(name, {})
+        precision = policy.get("position_precision", self._config.location_precision)
+        private = packet.protocol == Protocol.MESHTASTIC and name in self._channel_keys
+        if private:
+            # Never reconstruct or mirror private payloads as plaintext.
+            if not self._private_packet_allowed(packet, name, precision):
+                return False
+            encrypted = replace(packet, encrypted_payload=packet.raw_radio_packet[16:],
+                                remote_channel_name=name)
+            msg = self._mt_formatter._format_encrypted(encrypted)
+            if msg is None:
+                return False
+            result = self._client.publish(msg.topic, msg.payload, qos=1)
+            if result.rc == paho_mqtt.MQTT_ERR_SUCCESS:
+                self._publish_count += 1
+                self._last_publish_monotonic = time.monotonic()
+                return True
+            return False
+        if packet.protocol == Protocol.MESHTASTIC:
+            # Public plaintext output requires default-key provenance.
+            if packet.capture_source == "concentrator" and (
+                packet.matched_channel_index != 0
+                or name not in STANDARD_PRESETS
+                or packet.channel_hash != _xor_hash(name, _DEFAULT_PSK)
+            ):
+                return False
+            if type(precision) is int:
+                precision = min(15, max(0, precision))
+        packet = prepare_packet(packet, precision)
         # Only preserve original RF ciphertext for known non-position broadcasts.
         # Do not bypass the shared location filter for POSITION or unknown types.
         if (
@@ -258,7 +291,7 @@ class MqttPublisher:
         return True
 
     def _passes_safety_gates(self, packet: Packet) -> bool:
-        if not self._config.enabled:
+        if not self._config.enabled or packet.via_mqtt:
             return False
         if not is_broadcast(packet):
             self._blocked_destination_count += 1
@@ -278,13 +311,47 @@ class MqttPublisher:
             return False
 
         channel_name = self._resolve_channel_name(packet)
-        if channel_name.lower() not in self._allowed_channels:
+        policy = self._channel_policies.get(channel_name)
+        allowed = policy.get("uplink_enabled") is True if policy is not None else channel_name.lower() in self._allowed_channels
+        if not allowed:
             logger.debug(
                 "MQTT gate 2 blocked: channel '%s' not in allowed list", channel_name
             )
             return False
 
         return True
+
+    def _private_packet_allowed(self, packet: Packet, name: str, precision) -> bool:
+        if not packet.decrypted or packet.capture_source != "concentrator":
+            return False
+        if not packet.raw_radio_packet or len(packet.raw_radio_packet) <= 16:
+            return False
+        if packet.packet_type not in (PacketType.TEXT, PacketType.NODEINFO, PacketType.TELEMETRY, PacketType.POSITION):
+            return False
+        try:
+            key = _expand_key(base64.b64decode(self._channel_keys[name], validate=True))
+            if key == _DEFAULT_PSK or len(key) not in (16, 32) or not any(key):
+                return False
+            if packet.channel_hash != _xor_hash(name, key):
+                return False
+            # Verify against the captured ciphertext, not mutable key indices.
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            from meshtastic.protobuf.mesh_pb2 import Data
+            nonce = int(packet.packet_id, 16).to_bytes(8, "little") + int(packet.source_id, 16).to_bytes(4, "little") + bytes(4)
+            decryptor = Cipher(algorithms.AES(key), modes.CTR(nonce)).decryptor()
+            data = Data.FromString(decryptor.update(packet.raw_radio_packet[16:]) + decryptor.finalize())
+            from src.relay.mqtt_formatter import PORTNUM_MAP
+            if data.portnum != PORTNUM_MAP.get(packet.packet_type) or data.payload != packet.raw_app_payload:
+                return False
+            if packet.packet_type == PacketType.POSITION:
+                bits = (packet.decoded_payload or {}).get("precision_bits")
+                if type(precision) is not int or not 1 <= precision <= 32:
+                    return False
+                if type(bits) is not int or not 1 <= bits <= precision:
+                    return False
+            return True
+        except Exception:
+            return False
 
     def _resolve_channel_name(self, packet: Packet) -> str:
         if packet.protocol == Protocol.MESHTASTIC and packet.remote_channel_name:

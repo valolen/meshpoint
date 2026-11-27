@@ -124,6 +124,15 @@ async def send_message(
     }
 
 
+
+@router.post("/traceroute/{destination}")
+async def send_traceroute(destination: str, _claims: SessionClaims = Depends(require_admin)):
+    if _tx_service is None:
+        raise HTTPException(503, "Transmit service not available")
+    result = await _tx_service.send_traceroute(destination)
+    return {"success": result.success, "packet_id": result.packet_id,
+            "error": result.error, "airtime_ms": result.airtime_ms}
+
 @router.post("/advert")
 async def send_meshcore_advert(
     flood: bool = False,

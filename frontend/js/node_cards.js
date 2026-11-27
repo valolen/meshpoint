@@ -213,6 +213,12 @@ class NodeCards {
             });
         });
 
+        this._container.querySelectorAll('[data-traceroute]').forEach(btn => {
+            btn.addEventListener('click', e => {
+                e.stopPropagation();
+                this._runTraceroute(btn.closest('.nc-card').dataset.nodeId);
+            });
+        });
         this._container.querySelectorAll('.nc-card').forEach(el => {
             el.addEventListener('click', () => {
                 const nodeId = el.dataset.nodeId;
@@ -220,6 +226,53 @@ class NodeCards {
                 if (node && this._onCardClick) this._onCardClick(node);
             });
         });
+    }
+
+    async _runTraceroute(destination) {
+        if (this._traceRunning) return;
+        this._traceRunning = true;
+        const dialog = document.createElement('dialog');
+        dialog.style.cssText = 'background:#172231;color:#e5e7eb;border:1px solid #64748b;border-radius:8px;padding:24px;max-width:90vw';
+        const status = document.createElement('p');
+        status.textContent = 'Sending traceroute to ' + destination + '…';
+        const close = document.createElement('button');
+        close.textContent = 'Close';
+        close.onclick = () => dialog.close();
+        dialog.append(status, close);
+        document.body.appendChild(dialog);
+        dialog.showModal();
+        const norm = v => String(v || '').replace(/^!/, '').toLowerCase();
+        const started = Date.now();
+        try {
+            const tx = await fetch('/api/messages/traceroute/' + encodeURIComponent(destination), {method:'POST'});
+            const result = await tx.json();
+            if (!tx.ok || !result.success) throw new Error(result.error || result.detail || 'TX failed');
+            const requestId = parseInt(result.packet_id, 16);
+            status.textContent = 'Waiting for response… (' + result.packet_id + ')';
+            while (dialog.open && Date.now() - started < 60000) {
+                const rx = await fetch('/api/packets/by-source/' + encodeURIComponent(norm(destination)) + '?limit=100');
+                if (!rx.ok) throw new Error('Packet lookup failed');
+                const packets = await rx.json();
+                const match = packets.find(p => p.packet_type === 'traceroute' && p.decrypted &&
+                    norm(p.source_id) === norm(destination) && norm(p.destination_id) === norm(this._localNodeId) &&
+                    Number(p.decoded_payload?.request_id) === requestId && Date.parse(p.timestamp) >= started - 5000);
+                if (match && dialog.open) {
+                    dialog.close();
+                    const names = new Map(this._nodes.map(n => [norm(n.node_id), n.display_name || n.long_name || n.short_name]));
+                    new PacketDetailModal().show(match, {localNodeId:this._localNodeId, elapsedMs:Date.now()-started,
+                        formatNodeId:id => names.get(norm(id)) || '!' + norm(id)});
+                    return;
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            status.textContent = 'Traceroute timed out (60 s)';
+        } catch (e) {
+            status.textContent = String(e.message || e);
+        } finally {
+            this._traceRunning = false;
+            if (!dialog.open) dialog.remove();
+            else dialog.addEventListener('close', () => dialog.remove(), {once:true});
+        }
     }
 
     _isLocal(n) {
@@ -291,6 +344,7 @@ class NodeCards {
             ${signal}
             ${telemetry}
             ${meta}
+            ${proto === 'meshtastic' && !this._isLocal(n) && /^[!]?([0-9a-f]{8})$/i.test(n.node_id) ? '<button type="button" class="nc-chip" data-traceroute>Traceroute</button>' : ''}
         </div>`;
     }
 

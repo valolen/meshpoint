@@ -287,6 +287,10 @@ class UpstreamClient:
             message = self._buffer[0]
             try:
                 await self._send(message)
+                data = message.get("data", {})
+                logger.info("RADAR SENT id=%s type=%s ch=%02x",
+                            data.get("packet_id"), data.get("packet_type"),
+                            data.get("channel_hash", 0))
                 self._buffer.popleft()
             except ConnectionClosed:
                 self._connected = False

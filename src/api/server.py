@@ -230,8 +230,16 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             )
 
         # Only native RF broadcasts decoded with the standard public PSK.
-        from src.relay.channel_resolver import _DEFAULT_PSK, _expand_key, _xor_hash
+        from src.relay.channel_resolver import _DEFAULT_PSK, _expand_key, _xor_hash, STANDARD_PRESETS
         import base64
+
+        # Snapshot policy at startup; saved changes take effect after restart.
+        configured_channels = config.upstream.publish_channels
+        radar_hashes = {
+            _xor_hash(name, _DEFAULT_PSK)
+            for name in STANDARD_PRESETS
+            if isinstance(configured_channels, list) and name in configured_channels
+        }
 
         def radar_packet_allowed(packet):
             def block(reason):
@@ -256,8 +264,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 keys = pipeline._crypto.get_all_keys()
                 if keys[packet.matched_channel_index] != _DEFAULT_PSK:
                     return block("non-public key")
-                if packet.channel_hash != _xor_hash("LongFast", _DEFAULT_PSK):
-                    return block("not LongFast")
+                if packet.channel_hash not in radar_hashes:
+                    return block("channel not allowed")
                 for name, encoded in config.meshtastic.channel_keys.items():
                     if _xor_hash(name, _expand_key(base64.b64decode(encoded))) == packet.channel_hash:
                         return block("channel hash collision")

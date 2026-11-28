@@ -20,6 +20,7 @@ async function refresh(){
  if(busy)return;busy=true;
  try{
   const response=await fetch("/api/lorawan/frames?limit=100",{credentials:"same-origin",cache:"no-store"});
+  if(response.status===401){window.location.replace("/login?next=%2Florawan");return;}
   if(!response.ok)throw Error("HTTP "+response.status);
   const data=await response.json();const cards=document.createDocumentFragment();
   for(const item of [{frame_type:"Total retained",count:data.counts.reduce((n,r)=>n+r.count,0)},...data.counts]){

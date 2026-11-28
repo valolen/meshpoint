@@ -15,6 +15,15 @@
 
 set -euo pipefail
 
+# Optional AXON experiment: default invocation leaves existing RX sync settings intact.
+# --dual-sync: multi-SF LoRaWAN 0x34, single-SF and TX unchanged.
+# --single-sync: restore multi-SF to the original shared sync word.
+AXON_MULTI_SYNC="${1:-}"
+case "$AXON_MULTI_SYNC" in
+    ""|--dual-sync|--single-sync) ;;
+    *) echo "Usage: $0 [--dual-sync|--single-sync]" >&2; exit 2 ;;
+esac
+
 HAL_SRC="/opt/sx1302_hal/libloragw/src/loragw_sx1302.c"
 HAL_DIR="/opt/sx1302_hal"
 LIB_DEST="/usr/local/lib/libloragw.so"
@@ -99,6 +108,32 @@ if n == 0:
 Path(sys.argv[1]).write_text(new_s)
 print("OK: all patches applied")
 TXPATCH
+fi
+
+# AXON experimental RX split, inspired by GrayHatGuy/meshpoint-rnode
+# (multiprotocol_us915, 33ece452 and d1667e94).
+# Only the six multi-SF register writes are changed; TX globals and
+# single-SF registers retain their original values.
+if [ -n "$AXON_MULTI_SYNC" ]; then
+    python3 - "$HAL_SRC" "$AXON_MULTI_SYNC" <<'AXONSYNC'
+import sys
+from pathlib import Path
+
+p = Path(sys.argv[1])
+s = p.read_text()
+mode = sys.argv[2]
+for group in ("SF5", "SF6", "SF7TO12"):
+    for reg, peak, value in ((0, 1, 6), (1, 2, 8)):
+        name = f"SX1302_REG_RX_TOP_FRAME_SYNCH{reg}_{group}_PEAK{peak}_POS_{group}"
+        original = f"lgw_reg_w({name}, sw_reg{peak})"
+        split = f"lgw_reg_w({name}, {value})"
+        if s.count(original) + s.count(split) != 1:
+            raise SystemExit(f"ABORT: expected exactly one matching register write: {name}")
+        desired, other = (split, original) if mode == "--dual-sync" else (original, split)
+        s = s.replace(other, desired, 1)
+p.write_text(s)
+print("AXON multi-SF sync:", "0x34" if mode == "--dual-sync" else "shared/original")
+AXONSYNC
 fi
 
 info "Compiling libloragw (this takes a few minutes)..."

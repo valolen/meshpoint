@@ -162,7 +162,9 @@ class ConcentratorCaptureSource(CaptureSource):
                     signal=signal,
                     capture_source="concentrator",
                     timestamp=datetime.now(timezone.utc),
-                    protocol_hint=Protocol.MESHTASTIC,
+                    protocol_hint=(Protocol.LORAWAN if self._wrapper.multi_sf_public
+                                   and pkt.if_chain != 8 else Protocol.MESHTASTIC),
+                    if_chain=pkt.if_chain,
                 )
 
             await asyncio.sleep(self._poll_interval)

@@ -204,6 +204,11 @@ class PipelineCoordinator:
         try:
             while self._running:
                 await asyncio.sleep(interval)
+                from src.decode.lorawan import prune_frames
+                try:
+                    await prune_frames(self._db)
+                except Exception:
+                    logger.exception("Passive LoRaWAN retention cleanup failed")
                 removed = await self._packet_repo.cleanup_old(max_packets)
                 if removed:
                     logger.info(
@@ -405,6 +410,15 @@ class PipelineCoordinator:
         self._notify_callbacks(packet)
 
     async def _process_capture(self, raw: RawCapture) -> None:
+        # Public-sync concentrator frames must never enter mesh decoding,
+        # node discovery, retransmission, MQTT, or MeshRadar callbacks.
+        if raw.protocol_hint == Protocol.LORAWAN:
+            from src.decode.lorawan import store_frame
+            try:
+                await store_frame(self._db, raw)
+            except Exception:
+                logger.exception("Passive LoRaWAN capture storage failed")
+            return
         # Match bare "meshcore_usb" and labelled forms (meshcore_usb_868, …)
         # so Wave B multi-companion tags still hit the event adapter.
         if self._is_meshcore_usb_capture(raw.capture_source):

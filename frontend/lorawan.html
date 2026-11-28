@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>AXON · LoRaWAN</title>
+<style>
+:root{color-scheme:dark;--bg:#10151d;--panel:#19232f;--fg:#dce7ef;--muted:#91a5b7;--accent:#47dbc3;--line:#354352}
+@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#f4f7fa;--panel:#fff;--fg:#19232f;--muted:#526679;--accent:#087c70;--line:#d6e0e8}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}main{max-width:1600px;margin:auto;padding:20px}a{color:var(--accent)}header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h1{font-size:23px;margin:12px 0}p{color:var(--muted)}button{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:8px 14px;cursor:pointer}.cards{display:flex;flex-wrap:wrap;gap:8px;margin:15px 0}.card{background:var(--panel);padding:12px 16px;border:1px solid var(--line);border-radius:6px;min-width:120px}.card strong{display:block;color:var(--accent);font-size:22px}.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:6px}table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}th{background:var(--panel);color:var(--muted)}td:last-child{white-space:normal;min-width:160px}code{overflow-wrap:anywhere;white-space:normal}summary{cursor:pointer;color:var(--accent)}#status{color:var(--muted)}
+</style></head><body><main>
+<header><div><a href="/#/dashboard">← Meshpoint dashboard</a><h1>LoRaWAN · Passive RF monitor</h1></div><button id="refresh">Refresh</button></header>
+<p>Local RF observations only. Public sync 0x34, CRC accepted by the radio. Headers are not authenticated; MIC and application payload are not decrypted. No MQTT, forwarding or MeshRadar export.</p>
+<div id="status" role="status">Loading…</div><div class="cards" id="counts"></div>
+<div class="tablewrap"><table><thead><tr><th>Local time</th><th>Type</th><th>DevAddr / DevEUI</th><th>FCnt16</th><th>Port</th><th>IF</th><th>MHz</th><th>SF / BW / CR</th><th>RSSI</th><th>SNR</th><th>Bytes</th><th>Raw frame</th></tr></thead><tbody id="rows"></tbody></table></div>
+<p>Latest 100 observations; retained up to 7 days / 20,000 frames, pruned by the periodic cleanup task. Device addresses are not verified identities or locations.</p>
+</main><script>
+"use strict";
+const $=id=>document.getElementById(id);
+function td(row,value){const cell=row.insertCell();cell.textContent=value??"—";return cell;}
+function num(value,digits){return value==null?"—":Number(value).toFixed(digits);}
+let busy=false;
+async function refresh(){
+ if(busy)return;busy=true;
+ try{
+  const response=await fetch("/api/lorawan/frames?limit=100",{credentials:"same-origin",cache:"no-store"});
+  if(!response.ok)throw Error("HTTP "+response.status);
+  const data=await response.json();const cards=document.createDocumentFragment();
+  for(const item of [{frame_type:"Total retained",count:data.counts.reduce((n,r)=>n+r.count,0)},...data.counts]){
+   const card=document.createElement("div");card.className="card";const value=document.createElement("strong");value.textContent=item.count;card.append(value,document.createTextNode(item.frame_type));cards.append(card);
+  }
+  $("counts").replaceChildren(cards);
+  const rows=document.createDocumentFragment();
+  for(const frame of data.frames){
+   const row=document.createElement("tr"),h=frame.header||{};
+   td(row,new Date(frame.timestamp).toLocaleString());td(row,frame.frame_type);td(row,h.dev_addr||h.dev_eui);
+   td(row,h.fcnt16);td(row,h.fport);td(row,frame.if_chain);td(row,num(frame.frequency_mhz,4));
+   td(row,"SF"+frame.spreading_factor+" / "+frame.bandwidth_khz+" / "+(frame.coding_rate||"—"));
+   td(row,num(frame.rssi,1));td(row,num(frame.snr,1));td(row,frame.size);
+   const detail=document.createElement("details"),summary=document.createElement("summary"),code=document.createElement("code");
+   summary.textContent="HEX";code.textContent=frame.raw_hex;detail.append(summary,code);row.insertCell().append(detail);rows.append(row);
+  }
+  $("rows").replaceChildren(rows);$("status").textContent=data.frames.length?"Updated "+new Date().toLocaleTimeString():"No passive frames captured yet.";
+ }catch(e){$("status").textContent="Unable to load frames: "+e.message;}
+ finally{busy=false;}
+}
+$("refresh").addEventListener("click",refresh);refresh();setInterval(refresh,10000);
+</script></body></html>

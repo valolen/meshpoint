@@ -417,6 +417,29 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(stats_routes.router, dependencies=protected)
     app.include_router(rf_routes.router, dependencies=protected)
 
+    @app.get("/api/lorawan/frames", dependencies=protected)
+    async def lorawan_frames(limit: int = 100):
+        import json
+        from fastapi import HTTPException
+        if pipeline is None:
+            raise HTTPException(status_code=503, detail="Pipeline not ready")
+        limit = max(1, min(500, limit))
+        rows = await pipeline.database.fetch_all(
+            """SELECT id, timestamp, if_chain, frequency_mhz, spreading_factor,
+                      bandwidth_khz, coding_rate, rssi, snr, frame_type,
+                      header_json, hex(payload) AS raw_hex, length(payload) AS size
+               FROM lorawan_frames ORDER BY id DESC LIMIT ?""", (limit,))
+        for row in rows:
+            row["header"] = json.loads(row.pop("header_json"))
+        counts = await pipeline.database.fetch_all(
+            "SELECT frame_type, count(*) AS count FROM lorawan_frames GROUP BY frame_type")
+        return {"frames": rows, "counts": counts, "mic_verified": False}
+
+    @app.get("/lorawan", dependencies=protected, include_in_schema=False)
+    async def serve_lorawan():
+        return HTMLResponse((Path(config.dashboard.static_dir) / "lorawan.html").read_text(),
+                            headers={"Cache-Control": "no-store"})
+
     plugin_runtime.mount(app)
     app.state.plugin_runtime = plugin_runtime
 

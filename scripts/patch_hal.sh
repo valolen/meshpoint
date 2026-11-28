@@ -131,6 +131,11 @@ for group in ("SF5", "SF6", "SF7TO12"):
             raise SystemExit(f"ABORT: expected exactly one matching register write: {name}")
         desired, other = (split, original) if mode == "--dual-sync" else (original, split)
         s = s.replace(other, desired, 1)
+# Export the compiled mode so Python routes frames by the actual HAL build.
+# This describes configured sync, not proof of a particular frame protocol.
+import re
+s = re.sub(r"\nint axon_multisf_syncword\(void\) \{ return (?:0x34|0); \}\n", "\n", s)
+s += "\nint axon_multisf_syncword(void) { return " + ("0x34" if mode == "--dual-sync" else "0") + "; }\n"
 p.write_text(s)
 print("AXON multi-SF sync:", "0x34" if mode == "--dual-sync" else "shared/original")
 AXONSYNC

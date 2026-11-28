@@ -80,6 +80,7 @@ class ConcentratorPacket:
     coderate: int
     crc_ok: bool
     timestamp_us: int
+    if_chain: int = -1
 
 
 class SX1302Wrapper:
@@ -124,7 +125,19 @@ class SX1302Wrapper:
             )
         self._lib = ctypes.CDLL(self._lib_path)
         self._setup_function_signatures()
+        marker = getattr(self._lib, "axon_multisf_syncword", None)
+        self._multi_sf_public = False
+        if marker is not None:
+            marker.argtypes = []
+            marker.restype = ctypes.c_int
+            self._multi_sf_public = marker() == 0x34
+        if self._multi_sf_public:
+            logger.info("AXON HAL: Multi-SF public sync 0x34, isolated passive capture")
         logger.info("Loaded libloragw from %s", self._lib_path)
+
+    @property
+    def multi_sf_public(self) -> bool:
+        return getattr(self, "_multi_sf_public", False)
 
     @serialized_hal
     def reset(self, gpio_pins: list[int] | None = None) -> None:
@@ -316,6 +329,7 @@ class SX1302Wrapper:
                     coderate=pkt.coderate,
                     crc_ok=(pkt.status == STAT_CRC_OK),
                     timestamp_us=pkt.count_us,
+                    if_chain=int(pkt.if_chain),
                 )
             )
 

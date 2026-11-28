@@ -49,6 +49,23 @@ CREATE TABLE IF NOT EXISTS packets (
     timestamp        TEXT NOT NULL
 );
 
+-- Local passive RF observations. Never inserted into mesh nodes or packets.
+CREATE TABLE IF NOT EXISTS lorawan_frames (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    if_chain INTEGER,
+    frequency_mhz REAL,
+    spreading_factor INTEGER,
+    bandwidth_khz REAL,
+    coding_rate TEXT,
+    rssi REAL,
+    snr REAL,
+    frame_type TEXT NOT NULL,
+    header_json TEXT NOT NULL,
+    payload BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lorawan_timestamp ON lorawan_frames(timestamp);
+
 CREATE TABLE IF NOT EXISTS telemetry (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     node_id               TEXT NOT NULL,

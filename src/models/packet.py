@@ -11,6 +11,7 @@ from src.models.signal import SignalMetrics
 class Protocol(str, Enum):
     MESHTASTIC = "meshtastic"
     MESHCORE = "meshcore"
+    LORAWAN = "lorawan"
     UNKNOWN = "unknown"
 
 
@@ -48,6 +49,7 @@ class RawCapture:
     pre_decoded: Optional[dict] = None
     # Pre-parsed meshtastic-python receive dict (meshtasticd / TCP path).
     meshtastic_api_packet: Optional[dict[str, Any]] = None
+    if_chain: Optional[int] = None
 
 
 @dataclass
